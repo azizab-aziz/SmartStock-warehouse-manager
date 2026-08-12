@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes" ?>
+<CodeBlocks_project_file>
+	<FileVersion major="1" minor="6" />
+	<Project>
+		<Option title="Warehouse" />
+		<Option pch_mode="2" />
+		<Option compiler="gcc" />
+		<Build>
+			<Target title="Debug">
+				<Option output="bin/Debug/Warehouse" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="bin/Debug" />
+				<Option object_output="obj/Debug/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-g" />
+				</Compiler>
+				<ExtraCommands>
+					<Add after='cmd /c copy /Y &quot;$(PROJECT_DIR)src\db\schema.sql&quot; &quot;$(PROJECT_DIR)bin\Debug\schema.sql&quot;' />
+					<Add after='cmd /c mkdir &quot;$(PROJECT_DIR)bin\Debug\saves\historique&quot; 2&gt;nul' />
+					<Add after='cmd /c mkdir &quot;$(PROJECT_DIR)bin\Debug\saves\backup&quot; 2&gt;nul' />
+					<Add after='cmd /c mkdir &quot;$(PROJECT_DIR)bin\Debug\saves\exports&quot; 2&gt;nul' />
+				</ExtraCommands>
+			</Target>
+			<Target title="Release">
+				<Option output="bin/Release/Warehouse" prefix_auto="1" extension_auto="1" />
+				<Option working_dir="bin/Debug" />
+				<Option object_output="obj/Release/" />
+				<Option type="1" />
+				<Option compiler="gcc" />
+				<Compiler>
+					<Add option="-O2" />
+				</Compiler>
+				<Linker>
+					<Add option="-s" />
+				</Linker>
+			</Target>
+		</Build>
+		<Compiler>
+			<Add option="-Wall" />
+			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/includes" />
+			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/raylib" />
+			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/raygui" />
+			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/sqlite3" />
+		</Compiler>
+		<Linker>
+			<Add option="C:\Users\medaz\OneDrive\Desktop\storage-wms\lib\raylib\libraylib.a" />
+			<Add library="opengl32" />
+			<Add library="gdi32" />
+			<Add library="winmm" />
+			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/raylib" />
+		</Linker>
+		<Unit filename="includes/core.h" />
+		<Unit filename="includes/db.h" />
+		<Unit filename="includes/gui.h" />
+		<Unit filename="includes/hashtable.h" />
+		<Unit filename="lib/sqlite3/sqlite3.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="src/core/hashtable.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="src/core/inventory.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="src/db/database.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="src/db/schema.sql" />
+		<Unit filename="src/gui/main_window.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="src/main.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Extensions>
+			<lib_finder disable_auto="1" />
+		</Extensions>
+	</Project>
+</CodeBlocks_project_file>
