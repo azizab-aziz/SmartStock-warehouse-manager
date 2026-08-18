@@ -2,6 +2,7 @@
 #define WMS_CORE_H
 
 #include "db.h"
+#include "session.h"
 #include <stdbool.h>
 #include <stddef.h>
 
@@ -50,8 +51,7 @@ void inv_shutdown(void);
  * in-memory hash index inside the same call so they can never drift. */
 bool inv_add_product(const Product *p, char *err_out, size_t err_len);
 bool inv_update_product(const Product *p, char *err_out, size_t err_len); /* uses p->version for optimistic lock */
-bool inv_delete_product(int product_id, char *err_out, size_t err_len);
-
+bool inv_delete_product(int product_id, const Session *session, char *err_out, size_t err_len);
 /*
  * The core anti-race-condition primitive. Applies `delta` atomically
  * (positive = stock in, negative = stock out) to product_id@location_id,
@@ -59,13 +59,12 @@ bool inv_delete_product(int product_id, char *err_out, size_t err_len);
  * Returns false (and rolls back) if resulting quantity would go negative,
  * or if the write lock couldn't be acquired after retrying.
  */
-bool inv_post_movement(int product_id, int location_id, int delta,
-                        MovementType type, const char *reference,
-                        int user_id, const char *reason,
-                        char *err_out, size_t err_len);
+bool inv_post_movement(int product_id, int location_id, int delta, MovementType type,
+                        const char *reference, const Session *session,
+                        const char *reason, char *err_out, size_t err_len);
 
 bool inv_transfer(int product_id, int from_location_id, int to_location_id,
-                   int qty, int user_id, char *err_out, size_t err_len);
+                   int qty, const Session *session, char *err_out, size_t err_len);
 
 /* ---- Fast in-memory lookups (O(1) hash, no DB round-trip) ---- */
 Product *inv_find_by_sku(const char *sku);

@@ -6,11 +6,20 @@ PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 3000;     -- ms to wait on a lock before SQLITE_BUSY
 
 CREATE TABLE IF NOT EXISTS users (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    username    TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,      -- SHA-256 hex, see utils/auth.c
-    role        TEXT NOT NULL CHECK(role IN ('admin','manager','operateur')),
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    id            INTEGER PRIMARY KEY,
+    username      TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,   -- libsodium crypto_pwhash_str output
+    role          TEXT NOT NULL CHECK(role IN ('admin','manager','operateur')),
+    active        INTEGER NOT NULL DEFAULT 1,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    last_login_at TEXT
+);
+CREATE TABLE IF NOT EXISTS login_log (
+    id         INTEGER PRIMARY KEY,
+    user_id    INTEGER NOT NULL REFERENCES users(id),
+    login_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    logout_at  TEXT,
+    duration_s INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS locations (

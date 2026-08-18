@@ -1,5 +1,6 @@
 #include "core.h"
 #include "hashtable.h"
+#include "session.h"
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -214,8 +215,14 @@ bool inv_update_product(const Product *in, char *err_out, size_t err_len) {
     return true;
 }
 
-bool inv_delete_product(int product_id, char *err_out, size_t err_len) {
+bool inv_delete_product(int product_id, const Session *session, char *err_out, size_t err_len) {
+
+    if (!session_can(session, "product.delete")) {
+    snprintf(err_out, err_len, "Permission refusée pour ce rôle");
+    return false;
+}
     if (!db_begin_immediate_retry(g_db, 8)) {
+
         set_err(err_out, err_len, "Verrou d'ecriture indisponible");
         return false;
     }
@@ -271,8 +278,13 @@ bool inv_delete_product(int product_id, char *err_out, size_t err_len) {
  */
 bool inv_post_movement(int product_id, int location_id, int delta,
                         MovementType type, const char *reference,
-                        int user_id, const char *reason,
+                        const Session *session, const char *reason,
                         char *err_out, size_t err_len) {
+
+    if (!session_can(session, "movement.post")) {
+    snprintf(err_out, err_len, "Permission refusée pour ce rôle");
+    return false;
+}
     if (!db_begin_immediate_retry(g_db, 8)) {
         set_err(err_out, err_len, "Verrou d'ecriture indisponible, reessayez");
         return false;
@@ -317,7 +329,7 @@ bool inv_post_movement(int product_id, int location_id, int delta,
     sqlite3_bind_int(st, 3, delta);
     sqlite3_bind_text(st, 4, movement_type_str(type), -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st, 5, reference ? reference : "", -1, SQLITE_TRANSIENT);
-    if (user_id > 0) sqlite3_bind_int(st, 6, user_id);
+    if (session->user_id > 0) sqlite3_bind_int(st, 6, session->user_id);
     else sqlite3_bind_null(st, 6);
     sqlite3_bind_text(st, 7, reason ? reason : "", -1, SQLITE_TRANSIENT);
     rc = sqlite3_step(st);
@@ -335,21 +347,19 @@ bool inv_post_movement(int product_id, int location_id, int delta,
 }
 
 bool inv_transfer(int product_id, int from_location_id, int to_location_id,
-                   int qty, int user_id, char *err_out, size_t err_len) {
+                   int qty, const Session *session, char *err_out, size_t err_len) {
     char ref[32];
     snprintf(ref, sizeof ref, "TR-%d-%d", from_location_id, to_location_id);
 
     if (!inv_post_movement(product_id, from_location_id, -qty,
-                            MV_TRANSFER_OUT, ref, user_id, NULL, err_out, err_len))
+                            MV_TRANSFER_OUT, ref, session, NULL, err_out, err_len))
         return false;
 
-    /* If the "in" leg fails (shouldn't, but be defensive), reverse the "out"
-     * leg with a compensating movement rather than leaving stock stranded. */
     if (!inv_post_movement(product_id, to_location_id, qty,
-                            MV_TRANSFER_IN, ref, user_id, NULL, err_out, err_len)) {
+                            MV_TRANSFER_IN, ref, session, NULL, err_out, err_len)) {
         char comp_err[128];
         inv_post_movement(product_id, from_location_id, qty, MV_ANNULATION,
-                           ref, user_id, "compensation transfert echoue",
+                           ref, session, "compensation transfert echoue",
                            comp_err, sizeof comp_err);
         return false;
     }

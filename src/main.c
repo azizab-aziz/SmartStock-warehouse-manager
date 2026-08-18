@@ -35,9 +35,7 @@ system("mkdir saves\\exports 2>nul");
     /* TODO: replace with real login screen (users table + password hash
        check). For now we run as a single hardcoded admin session so the
        GUI/inventory wiring can be exercised end-to-end. */
-    int current_user_id = 1;
-
-    gui_run(&db, current_user_id);
+        gui_run(&db);
 
     inv_shutdown();
     db_close(&db);

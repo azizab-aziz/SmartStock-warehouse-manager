@@ -14,7 +14,12 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-g" />
+					<Add directory="   .../storage-wms/lib/sodium/include" />
 				</Compiler>
+				<Linker>
+					<Add library=".../storage-wms/lib/sodium/lib/libsodium.dll.a" />
+					<Add directory="   .../storage-wms/lib/sodium/lib" />
+				</Linker>
 				<ExtraCommands>
 					<Add after='cmd /c copy /Y &quot;$(PROJECT_DIR)src\db\schema.sql&quot; &quot;$(PROJECT_DIR)bin\Debug\schema.sql&quot;' />
 					<Add after='cmd /c mkdir &quot;$(PROJECT_DIR)bin\Debug\saves\historique&quot; 2&gt;nul' />
@@ -42,6 +47,7 @@
 			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/raylib" />
 			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/raygui" />
 			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/sqlite3" />
+			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/sodium/include" />
 		</Compiler>
 		<Linker>
 			<Add option="C:\Users\medaz\OneDrive\Desktop\storage-wms\lib\raylib\libraylib.a" />
@@ -54,6 +60,7 @@
 		<Unit filename="includes/db.h" />
 		<Unit filename="includes/gui.h" />
 		<Unit filename="includes/hashtable.h" />
+		<Unit filename="includes/session.h" />
 		<Unit filename="lib/sqlite3/sqlite3.c">
 			<Option compilerVar="CC" />
 		</Unit>
@@ -61,6 +68,9 @@
 			<Option compilerVar="CC" />
 		</Unit>
 		<Unit filename="src/core/inventory.c">
+			<Option compilerVar="CC" />
+		</Unit>
+		<Unit filename="src/core/session.c">
 			<Option compilerVar="CC" />
 		</Unit>
 		<Unit filename="src/db/database.c">

@@ -3,6 +3,7 @@
 
 #include <sqlite3.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 /*
  * Thin wrapper around a single sqlite3* connection.
@@ -34,5 +35,15 @@ bool db_begin_immediate(WmsDb *db);
 bool db_begin_immediate_retry(WmsDb *db, int max_retries);
 bool db_commit(WmsDb *db);
 bool db_rollback(WmsDb *db);
+
+
+/* --- Authentication / session support --- */
+bool db_verify_credentials(WmsDb *db, const char *username,
+                            const char *password, int *out_user_id,
+                            char *out_role, size_t role_len);
+bool db_create_user(WmsDb *db, const char *username, const char *password,
+                     const char *role, char *err_out, size_t err_len);
+bool db_log_login(WmsDb *db, int user_id, int *out_login_log_id);
+bool db_log_logout(WmsDb *db, int login_log_id);
 
 #endif
