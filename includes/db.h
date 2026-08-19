@@ -45,5 +45,6 @@ bool db_create_user(WmsDb *db, const char *username, const char *password,
                      const char *role, char *err_out, size_t err_len);
 bool db_log_login(WmsDb *db, int user_id, int *out_login_log_id);
 bool db_log_logout(WmsDb *db, int login_log_id);
+bool db_count_users(WmsDb *db, int *out_count);
 
 #endif

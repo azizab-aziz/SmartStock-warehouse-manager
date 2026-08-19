@@ -183,3 +183,16 @@ bool db_log_logout(WmsDb *db, int login_log_id) {
     sqlite3_finalize(stmt);
     return ok;
 }
+
+bool db_count_users(WmsDb *db, int *out_count) {
+    sqlite3_stmt *stmt;
+    if (sqlite3_prepare_v2(db->handle, "SELECT COUNT(*) FROM users;", -1, &stmt, NULL) != SQLITE_OK)
+        return false;
+    bool ok = false;
+    if (sqlite3_step(stmt) == SQLITE_ROW) {
+        *out_count = sqlite3_column_int(stmt, 0);
+        ok = true;
+    }
+    sqlite3_finalize(stmt);
+    return ok;
+}

@@ -14,11 +14,11 @@
 				<Option compiler="gcc" />
 				<Compiler>
 					<Add option="-g" />
-					<Add directory="   .../storage-wms/lib/sodium/include" />
+					<Add directory="/storage-wms/lib/sodium/include" />
 				</Compiler>
 				<Linker>
-					<Add library=".../storage-wms/lib/sodium/lib/libsodium.dll.a" />
-					<Add directory="   .../storage-wms/lib/sodium/lib" />
+					<Add library="sodium" />
+					<Add directory="/storage-wms/lib/sodium/lib" />
 				</Linker>
 				<ExtraCommands>
 					<Add after='cmd /c copy /Y &quot;$(PROJECT_DIR)src\db\schema.sql&quot; &quot;$(PROJECT_DIR)bin\Debug\schema.sql&quot;' />
@@ -54,7 +54,9 @@
 			<Add library="opengl32" />
 			<Add library="gdi32" />
 			<Add library="winmm" />
+			<Add library="sodium" />
 			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/raylib" />
+			<Add directory="C:/Users/medaz/OneDrive/Desktop/storage-wms/lib/sodium/lib" />
 		</Linker>
 		<Unit filename="includes/core.h" />
 		<Unit filename="includes/db.h" />

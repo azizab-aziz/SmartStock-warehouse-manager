@@ -25,41 +25,119 @@ static bool password_edit = false;
 static char login_error[128] = "";
 static float error_fade = 0.0f;
 
-static void draw_login_screen(WmsDb *db) {
+/* --- Signup (create account) state --- */
+static bool signup_mode = false;
+static char signup_username[64] = "";
+static char signup_password[64] = "";
+static char signup_confirm[64]  = "";
+static bool su_username_edit = false, su_password_edit = false, su_confirm_edit = false;
 
+static void draw_login_screen(WmsDb *db) {
     ClearBackground((Color){ 22, 32, 48, 255 });
-    int panel_w = 360, panel_h = 260;
+    int panel_w = 360, panel_h = signup_mode ? 340 : 260;
     int px = (SCREEN_W - panel_w) / 2, py = (SCREEN_H - panel_h) / 2;
 
-    GuiPanel((Rectangle){ px, py, panel_w, panel_h }, "SmartStock -- Connexion");
-    GuiLabel((Rectangle){ px + 24, py + 50, 100, 24 }, "Utilisateur");
-    if (GuiTextBox((Rectangle){ px + 24, py + 76, panel_w - 48, 32 },
-                    login_username, sizeof(login_username), username_edit))
-        username_edit = !username_edit;
+    if (!signup_mode) {
+        /* ---- LOGIN FORM ---- */
+        GuiPanel((Rectangle){ px, py, panel_w, panel_h }, "SmartStock -- Connexion");
+
+        GuiLabel((Rectangle){ px + 24, py + 50, 100, 24 }, "Utilisateur");
+        if (GuiTextBox((Rectangle){ px + 24, py + 76, panel_w - 48, 32 },
+                        login_username, sizeof(login_username), username_edit))
+            username_edit = !username_edit;
 
         GuiLabel((Rectangle){ px + 24, py + 116, 100, 24 }, "Mot de passe");
-    if (GuiTextBox((Rectangle){ px + 24, py + 142, panel_w - 48, 32 },
-                    login_password, sizeof(login_password), password_edit))
-        password_edit = !password_edit;
+        if (GuiTextBox((Rectangle){ px + 24, py + 142, panel_w - 48, 32 },
+                        login_password, sizeof(login_password), password_edit))
+            password_edit = !password_edit;
 
-    bool submit = GuiButton((Rectangle){ px + 24, py + 190, panel_w - 48, 36 },
-                             "Se connecter") || IsKeyPressed(KEY_ENTER);
+        bool submit = GuiButton((Rectangle){ px + 24, py + 190, panel_w - 48, 36 },
+                                 "Se connecter") || IsKeyPressed(KEY_ENTER);
 
-    if (submit) {
-        char err[128];
-        if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
-            memset(login_password, 0, sizeof(login_password));
-            g_screen = SCREEN_MAIN;
-        } else {
-            snprintf(login_error, sizeof(login_error), "%s", err);
-            error_fade = 1.0f;
+        if (submit) {
+            char err[128];
+            if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
+                memset(login_password, 0, sizeof(login_password));
+                g_screen = SCREEN_MAIN;
+            } else {
+                snprintf(login_error, sizeof(login_error), "%s", err);
+                error_fade = 1.0f;
+            }
         }
-    }
-    if (error_fade > 0.0f) {
-        Color c = RED;
-        c.a = (unsigned char)(error_fade * 255);
-        DrawText(login_error, px + 24, py + 232, 16, c);
-        error_fade -= GetFrameTime() * 0.5f;
+        if (error_fade > 0.0f) {
+            Color c = RED;
+            c.a = (unsigned char)(error_fade * 255);
+            DrawText(login_error, px + 24, py + 232, 16, c);
+            error_fade -= GetFrameTime() * 0.5f;
+        }
+
+        if (GuiButton((Rectangle){ px + 24, py + panel_h - 34, panel_w - 48, 26 }, "Creer un compte")) {
+            signup_mode = true;
+            login_error[0] = '\0';
+            signup_username[0] = signup_password[0] = signup_confirm[0] = '\0';
+        }
+
+    } else {
+        /* ---- SIGNUP FORM ---- */
+        GuiPanel((Rectangle){ px, py, panel_w, panel_h }, "SmartStock -- Creer un compte");
+
+        GuiLabel((Rectangle){ px + 24, py + 50, 140, 24 }, "Utilisateur");
+        if (GuiTextBox((Rectangle){ px + 24, py + 76, panel_w - 48, 32 },
+                        signup_username, sizeof(signup_username), su_username_edit))
+            su_username_edit = !su_username_edit;
+
+        GuiLabel((Rectangle){ px + 24, py + 116, 140, 24 }, "Mot de passe (8+ caracteres)");
+        if (GuiTextBox((Rectangle){ px + 24, py + 142, panel_w - 48, 32 },
+                        signup_password, sizeof(signup_password), su_password_edit))
+            su_password_edit = !su_password_edit;
+
+        GuiLabel((Rectangle){ px + 24, py + 182, 140, 24 }, "Confirmer le mot de passe");
+        if (GuiTextBox((Rectangle){ px + 24, py + 208, panel_w - 48, 32 },
+                        signup_confirm, sizeof(signup_confirm), su_confirm_edit))
+            su_confirm_edit = !su_confirm_edit;
+
+        if (GuiButton((Rectangle){ px + 24, py + 256, panel_w - 48, 36 }, "S'inscrire")) {
+            if (strlen(signup_username) < 3) {
+                snprintf(login_error, sizeof(login_error), "Nom d'utilisateur trop court");
+                error_fade = 1.0f;
+            } else if (strlen(signup_password) < 8) {
+                snprintf(login_error, sizeof(login_error), "Mot de passe trop court (8 min)");
+                error_fade = 1.0f;
+            } else if (strcmp(signup_password, signup_confirm) != 0) {
+                snprintf(login_error, sizeof(login_error), "Les mots de passe ne correspondent pas");
+                error_fade = 1.0f;
+            } else {
+                int existing = 0;
+                db_count_users(db, &existing);
+                const char *role = (existing == 0) ? "admin" : "operateur";
+
+                char err[256];
+                if (db_create_user(db, signup_username, signup_password, role, err, sizeof(err))) {
+                    /* auto-login right after signup */
+                    char login_err[128];
+                    session_login(db, signup_username, signup_password, &g_session, login_err, sizeof(login_err));
+                    memset(signup_password, 0, sizeof(signup_password));
+                    memset(signup_confirm, 0, sizeof(signup_confirm));
+                    signup_mode = false;
+                    g_screen = SCREEN_MAIN;
+                } else {
+                    snprintf(login_error, sizeof(login_error), "%s", err);
+                    error_fade = 1.0f;
+                }
+            }
+        }
+
+        if (error_fade > 0.0f) {
+            Color c = RED;
+            c.a = (unsigned char)(error_fade * 255);
+            DrawText(login_error, px + 24, py + 300, 14, c);
+            error_fade -= GetFrameTime() * 0.5f;
+        }
+
+        if (GuiButton((Rectangle){ px + 24, py + panel_h - 34, panel_w - 48, 26 }, "Retour a la connexion")) {
+            signup_mode = false;
+            login_error[0] = '\0';
+        }
     }
 }
 
