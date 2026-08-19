@@ -37,9 +37,9 @@ static void draw_login_screen(WmsDb *db) {
                     login_username, sizeof(login_username), username_edit))
         username_edit = !username_edit;
 
-    GuiLabel((Rectangle){ px + 24, py + 116, 100, 24 }, "Mot de passe");
-    if (GuiTextBoxPassword((Rectangle){ px + 24, py + 142, panel_w - 48, 32 },
-                            login_password, sizeof(login_password), password_edit))
+        GuiLabel((Rectangle){ px + 24, py + 116, 100, 24 }, "Mot de passe");
+    if (GuiTextBox((Rectangle){ px + 24, py + 142, panel_w - 48, 32 },
+                    login_password, sizeof(login_password), password_edit))
         password_edit = !password_edit;
 
     bool submit = GuiButton((Rectangle){ px + 24, py + 190, panel_w - 48, 36 },
