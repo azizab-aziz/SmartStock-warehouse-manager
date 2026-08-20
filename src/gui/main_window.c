@@ -11,6 +11,14 @@
 #define PAGE_SIZE 10
 #define SCREEN_W  1024
 #define SCREEN_H  768
+#define COLOR_NAVY_DARK   (Color){ 15, 23, 42, 255 }     /* sidebar/header bg */
+#define COLOR_NAVY_MID    (Color){ 30, 41, 59, 255 }      /* panel accents */
+#define COLOR_ACCENT_BLUE (Color){ 37, 99, 235, 255 }     /* primary buttons */
+#define COLOR_ACCENT_TEAL (Color){ 16, 185, 129, 255 }    /* success/positive */
+#define COLOR_ACCENT_RED  (Color){ 220, 38, 38, 255 }     /* errors/alerts */
+#define COLOR_BG_LIGHT    (Color){ 248, 250, 252, 255 }   /* main content bg */
+#define COLOR_TEXT_MUTED  (Color){ 100, 116, 139, 255 }   /* secondary text */
+#define COLOR_BORDER      (Color){ 226, 232, 240, 255 }   /* card borders */
 
 #include "session.h"
 
@@ -33,45 +41,62 @@ static char signup_confirm[64]  = "";
 static bool su_username_edit = false, su_password_edit = false, su_confirm_edit = false;
 
 static void draw_login_screen(WmsDb *db) {
-    ClearBackground((Color){ 22, 32, 48, 255 });
+    ClearBackground(COLOR_NAVY_DARK);
     int panel_w = 360, panel_h = signup_mode ? 340 : 260;
     int px = (SCREEN_W - panel_w) / 2, py = (SCREEN_H - panel_h) / 2;
 
-    if (!signup_mode) {
+        if (!signup_mode) {
         /* ---- LOGIN FORM ---- */
-        GuiPanel((Rectangle){ px, py, panel_w, panel_h }, "SmartStock -- Connexion");
+        DrawRectangleRounded((Rectangle){ px, py, panel_w, panel_h }, 0.06f, 8, WHITE);
+        DrawRectangleRoundedLines((Rectangle){ px, py, panel_w, panel_h }, 0.06f, 8, 1, COLOR_BORDER);
 
-        GuiLabel((Rectangle){ px + 24, py + 50, 100, 24 }, "Utilisateur");
-        if (GuiTextBox((Rectangle){ px + 24, py + 76, panel_w - 48, 32 },
+        DrawText("SmartStock", px + 24, py + 24, 22, (Color){30,41,59,255});
+        DrawText("Connexion a votre espace", px + 24, py + 50, 14, COLOR_TEXT_MUTED);
+
+        GuiLabel((Rectangle){ px + 24, py + 82, 100, 20 }, "Utilisateur");
+        if (GuiTextBox((Rectangle){ px + 24, py + 104, panel_w - 48, 36 },
                         login_username, sizeof(login_username), username_edit))
             username_edit = !username_edit;
 
-        GuiLabel((Rectangle){ px + 24, py + 116, 100, 24 }, "Mot de passe");
-        if (GuiTextBox((Rectangle){ px + 24, py + 142, panel_w - 48, 32 },
+        GuiLabel((Rectangle){ px + 24, py + 148, 100, 20 }, "Mot de passe");
+        if (GuiTextBox((Rectangle){ px + 24, py + 170, panel_w - 48, 36 },
                         login_password, sizeof(login_password), password_edit))
             password_edit = !password_edit;
 
-        bool submit = GuiButton((Rectangle){ px + 24, py + 190, panel_w - 48, 36 },
-                         "Se connecter") || IsKeyPressed(KEY_ENTER);
-if (submit) {
-    char err[128];
-    if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
-        memset(login_password, 0, sizeof(login_password));
-        g_screen = SCREEN_MAIN;
-    } else {
-        snprintf(login_error, sizeof(login_error), "%s", err);
-        error_fade = 1.0f;
-    }
-}
+        /* Primary button - filled accent blue, drawn manually so we
+           control the color (GuiButton uses the neutral palette above). */
+        Rectangle submit_rect = { px + 24, py + 218, panel_w - 48, 40 };
+        bool hover = CheckCollisionPointRec(GetMousePosition(), submit_rect);
+        DrawRectangleRounded(submit_rect, 0.2f, 6, hover ? (Color){29,78,216,255} : COLOR_ACCENT_BLUE);
+        DrawText("Se connecter", submit_rect.x + submit_rect.width/2 - MeasureText("Se connecter", 16)/2,
+                  submit_rect.y + 12, 16, WHITE);
+        bool submit = (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ENTER);
 
+        if (submit) {
+            char err[128];
+            if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
+                memset(login_password, 0, sizeof(login_password));
+                g_screen = SCREEN_MAIN;
+            } else {
+                snprintf(login_error, sizeof(login_error), "%s", err);
+                error_fade = 1.0f;
+            }
+        }
         if (error_fade > 0.0f) {
-            Color c = RED;
+            Color c = COLOR_ACCENT_RED;
             c.a = (unsigned char)(error_fade * 255);
-            DrawText(login_error, px + 24, py + 232, 16, c);
+            DrawText(login_error, px + 24, py + 266, 13, c);
             error_fade -= GetFrameTime() * 0.5f;
         }
 
-        if (GuiButton((Rectangle){ px + 24, py + panel_h - 34, panel_w - 48, 26 }, "Creer un compte")) {
+        /* Secondary action as a text link, not a second stacked button. */
+        const char *link_text = "Pas encore de compte ? Creer un compte";
+        int link_w = MeasureText(link_text, 13);
+        Rectangle link_rect = { px + panel_w/2 - link_w/2 - 6, py + panel_h - 32, link_w + 12, 22 };
+        bool link_hover = CheckCollisionPointRec(GetMousePosition(), link_rect);
+        DrawText(link_text, link_rect.x + 6, link_rect.y + 4, 13,
+                  link_hover ? COLOR_ACCENT_BLUE : COLOR_TEXT_MUTED);
+        if (link_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             signup_mode = true;
             login_error[0] = '\0';
             signup_username[0] = signup_password[0] = signup_confirm[0] = '\0';
@@ -158,11 +183,28 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
 }
 
 void gui_run(WmsDb *db) {
-    InitWindow(SCREEN_W, SCREEN_H, "Gestion de Stock - Warehouse WMS");
+        InitWindow(SCREEN_W, SCREEN_H, "Gestion de Stock - Warehouse WMS");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
     SetTargetFPS(60);
 
-    GuiSetStyle(DEFAULT, TEXT_SIZE, 18);
+    /* Load Segoe UI per spec; fall back to raylib's default if unavailable
+       (e.g. running on a non-Windows box during testing). */
+    Font appFont = LoadFontEx("C:/Windows/Fonts/segoeui.ttf", 32, NULL, 0);
+    if (appFont.texture.id == 0) appFont = GetFontDefault();
+    GuiSetFont(appFont);
+
+    GuiSetStyle(DEFAULT, TEXT_SIZE, 16);
+    GuiSetStyle(DEFAULT, TEXT_SPACING, 1);
+
+    /* Global control palette - applies to every button/textbox/panel
+       unless overridden per-control. */
+    GuiSetStyle(DEFAULT, BASE_COLOR_NORMAL,   ColorToInt(WHITE));
+    GuiSetStyle(DEFAULT, BASE_COLOR_FOCUSED,  ColorToInt((Color){ 239, 246, 255, 255 }));
+    GuiSetStyle(DEFAULT, BASE_COLOR_PRESSED,  ColorToInt((Color){ 219, 234, 254, 255 }));
+    GuiSetStyle(DEFAULT, BORDER_COLOR_NORMAL, ColorToInt(COLOR_BORDER));
+    GuiSetStyle(DEFAULT, BORDER_COLOR_FOCUSED,ColorToInt(COLOR_ACCENT_BLUE));
+    GuiSetStyle(DEFAULT, TEXT_COLOR_NORMAL,   ColorToInt((Color){ 30, 41, 59, 255 }));
+    GuiSetStyle(DEFAULT, BORDER_WIDTH, 1);
 
     /* ---- state ---- */
     char search_query[128] = {0};
