@@ -55,16 +55,16 @@ static void draw_login_screen(WmsDb *db) {
                          "Se connecter") || IsKeyPressed(KEY_ENTER);
 
 if (submit) {
-    DrawText("SUBMIT CLICKED", px, py - 20, 14, YELLOW);  /* debug line */
     char err[128];
-            if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
-                memset(login_password, 0, sizeof(login_password));
-                g_screen = SCREEN_MAIN;
-            } else {
-                snprintf(login_error, sizeof(login_error), "%s", err);
-                error_fade = 1.0f;
-            }
-        }
+    bool ok = session_login(db, login_username, login_password, &g_session, err, sizeof(err));
+    snprintf(login_error, sizeof(login_error), "LOGIN RESULT: %d | err: %s | user='%s' pass='%s'",
+              ok, err, login_username, login_password);
+    error_fade = 1.0f;
+    if (ok) {
+        memset(login_password, 0, sizeof(login_password));
+        g_screen = SCREEN_MAIN;
+    }
+}
         if (error_fade > 0.0f) {
             Color c = RED;
             c.a = (unsigned char)(error_fade * 255);
