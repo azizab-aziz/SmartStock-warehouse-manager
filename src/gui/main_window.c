@@ -53,23 +53,22 @@ static void draw_login_screen(WmsDb *db) {
 
         bool submit = GuiButton((Rectangle){ px + 24, py + 190, panel_w - 48, 36 },
                          "Se connecter") || IsKeyPressed(KEY_ENTER);
-
 if (submit) {
     char err[128];
-    bool ok = session_login(db, login_username, login_password, &g_session, err, sizeof(err));
-    snprintf(login_error, sizeof(login_error), "LOGIN RESULT: %d | err: %s | user='%s' pass='%s'",
-              ok, err, login_username, login_password);
-    error_fade = 1.0f;
-    if (ok) {
+    if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
         memset(login_password, 0, sizeof(login_password));
         g_screen = SCREEN_MAIN;
+    } else {
+        snprintf(login_error, sizeof(login_error), "%s", err);
+        error_fade = 1.0f;
     }
 }
+
         if (error_fade > 0.0f) {
             Color c = RED;
             c.a = (unsigned char)(error_fade * 255);
             DrawText(login_error, px + 24, py + 232, 16, c);
-            //error_fade -= GetFrameTime() * 0.5f;
+            error_fade -= GetFrameTime() * 0.5f;
         }
 
         if (GuiButton((Rectangle){ px + 24, py + panel_h - 34, panel_w - 48, 26 }, "Creer un compte")) {
