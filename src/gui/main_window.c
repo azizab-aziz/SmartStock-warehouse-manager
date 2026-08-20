@@ -25,6 +25,11 @@
 typedef enum { SCREEN_LOGIN, SCREEN_MAIN } Screen;
 static Screen  g_screen = SCREEN_LOGIN;
 static Session g_session = {0};
+static Font g_appFont;
+static Font g_appFontBold;
+
+static void AppText(const char *text, int x, int y, int size, Color color);
+static void AppTextBold(const char *text, int x, int y, int size, Color color);
 
 static char login_username[64] = "";
 static char login_password[64] = "";
@@ -42,34 +47,32 @@ static bool su_username_edit = false, su_password_edit = false, su_confirm_edit 
 
 static void draw_login_screen(WmsDb *db) {
     ClearBackground(COLOR_NAVY_DARK);
-    int panel_w = 360, panel_h = signup_mode ? 340 : 260;
+    int panel_w = 380, panel_h = signup_mode ? 400 : 340;
     int px = (SCREEN_W - panel_w) / 2, py = (SCREEN_H - panel_h) / 2;
 
-        if (!signup_mode) {
-        /* ---- LOGIN FORM ---- */
+            if (!signup_mode) {
         DrawRectangleRounded((Rectangle){ px, py, panel_w, panel_h }, 0.06f, 8, WHITE);
         DrawRectangleRoundedLines((Rectangle){ px, py, panel_w, panel_h }, 0.06f, 8, 1, COLOR_BORDER);
 
-        DrawText("SmartStock", px + 24, py + 24, 22, (Color){30,41,59,255});
-        DrawText("Connexion a votre espace", px + 24, py + 50, 14, COLOR_TEXT_MUTED);
+        AppText("SmartStock", px + 24, py + 24, 22, (Color){30,41,59,255});
+        AppText("Connexion a votre espace", px + 24, py + 54, 14, COLOR_TEXT_MUTED);
 
-        GuiLabel((Rectangle){ px + 24, py + 82, 100, 20 }, "Utilisateur");
-        if (GuiTextBox((Rectangle){ px + 24, py + 104, panel_w - 48, 36 },
+        GuiLabel((Rectangle){ px + 24, py + 92, 100, 20 }, "Utilisateur");
+        if (GuiTextBox((Rectangle){ px + 24, py + 114, panel_w - 48, 36 },
                         login_username, sizeof(login_username), username_edit))
             username_edit = !username_edit;
 
-        GuiLabel((Rectangle){ px + 24, py + 148, 100, 20 }, "Mot de passe");
-        if (GuiTextBox((Rectangle){ px + 24, py + 170, panel_w - 48, 36 },
+        GuiLabel((Rectangle){ px + 24, py + 160, 100, 20 }, "Mot de passe");
+        if (GuiTextBox((Rectangle){ px + 24, py + 182, panel_w - 48, 36 },
                         login_password, sizeof(login_password), password_edit))
             password_edit = !password_edit;
 
-        /* Primary button - filled accent blue, drawn manually so we
-           control the color (GuiButton uses the neutral palette above). */
-        Rectangle submit_rect = { px + 24, py + 218, panel_w - 48, 40 };
+        Rectangle submit_rect = { px + 24, py + 232, panel_w - 48, 40 };
         bool hover = CheckCollisionPointRec(GetMousePosition(), submit_rect);
         DrawRectangleRounded(submit_rect, 0.2f, 6, hover ? (Color){29,78,216,255} : COLOR_ACCENT_BLUE);
-        DrawText("Se connecter", submit_rect.x + submit_rect.width/2 - MeasureText("Se connecter", 16)/2,
-                  submit_rect.y + 12, 16, WHITE);
+        Vector2 tsize = MeasureTextEx(g_appFont, "Se connecter", 16, 1);
+        AppText("Se connecter", submit_rect.x + submit_rect.width/2 - tsize.x/2,
+                 submit_rect.y + 12, 16, WHITE);
         bool submit = (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || IsKeyPressed(KEY_ENTER);
 
         if (submit) {
@@ -85,22 +88,23 @@ static void draw_login_screen(WmsDb *db) {
         if (error_fade > 0.0f) {
             Color c = COLOR_ACCENT_RED;
             c.a = (unsigned char)(error_fade * 255);
-            DrawText(login_error, px + 24, py + 266, 13, c);
+            AppText(login_error, px + 24, py + 282, 13, c);
             error_fade -= GetFrameTime() * 0.5f;
         }
 
-        /* Secondary action as a text link, not a second stacked button. */
+        /* Link sits BELOW the button with real spacing - no overlap. */
         const char *link_text = "Pas encore de compte ? Creer un compte";
-        int link_w = MeasureText(link_text, 13);
-        Rectangle link_rect = { px + panel_w/2 - link_w/2 - 6, py + panel_h - 32, link_w + 12, 22 };
+        Vector2 link_size = MeasureTextEx(g_appFont, link_text, 13, 1);
+        Rectangle link_rect = { px + panel_w/2 - link_size.x/2 - 6, py + panel_h - 40, link_size.x + 12, 24 };
         bool link_hover = CheckCollisionPointRec(GetMousePosition(), link_rect);
-        DrawText(link_text, link_rect.x + 6, link_rect.y + 4, 13,
-                  link_hover ? COLOR_ACCENT_BLUE : COLOR_TEXT_MUTED);
+        AppText(link_text, link_rect.x + 6, link_rect.y + 5, 13,
+                 link_hover ? COLOR_ACCENT_BLUE : COLOR_TEXT_MUTED);
         if (link_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             signup_mode = true;
             login_error[0] = '\0';
             signup_username[0] = signup_password[0] = signup_confirm[0] = '\0';
         }
+
 
     } else {
         /* ---- SIGNUP FORM ---- */
@@ -182,6 +186,10 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
     t->is_error = is_error;
 }
 
+static void AppText(const char *text, int x, int y, int size, Color color) {
+    DrawTextEx(g_appFont, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
+}
+
 void gui_run(WmsDb *db) {
         InitWindow(SCREEN_W, SCREEN_H, "Gestion de Stock - Warehouse WMS");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
@@ -189,9 +197,22 @@ void gui_run(WmsDb *db) {
 
     /* Load Segoe UI per spec; fall back to raylib's default if unavailable
        (e.g. running on a non-Windows box during testing). */
-    Font appFont = LoadFontEx("C:/Windows/Fonts/segoeui.ttf", 32, NULL, 0);
+        /* Load Inter with French accented characters included (é, è, à, ç, ù, etc.)
+       - without an explicit codepoint list, raylib only loads ASCII and
+       accented letters render as boxes/blanks. */
+    int codepoints[512];
+    int cp_count = 0;
+    for (int c = 32; c < 128; c++) codepoints[cp_count++] = c;       /* ASCII */
+    int french_extra[] = { 0xE9,0xE8,0xEA,0xEB,0xE0,0xE2,0xE7,0xF9,
+                            0xFB,0xFC,0xEE,0xEF,0xF4,0xC9,0xC8,0xC0,0xC7 };
+    for (int i = 0; i < (int)(sizeof french_extra / sizeof french_extra[0]); i++)
+        codepoints[cp_count++] = french_extra[i];
+
+    Font appFont = LoadFontEx("resources/fonts/Inter-Regular.ttf", 48, codepoints, cp_count);
     if (appFont.texture.id == 0) appFont = GetFontDefault();
+    SetTextureFilter(appFont.texture, TEXTURE_FILTER_BILINEAR);
     GuiSetFont(appFont);
+    g_appFont = appFont;   /* see Part 2 - stored globally so DrawText calls can use it too */
 
     GuiSetStyle(DEFAULT, TEXT_SIZE, 16);
     GuiSetStyle(DEFAULT, TEXT_SPACING, 1);
@@ -277,15 +298,30 @@ void gui_run(WmsDb *db) {
 
         /* Header bar - navy */
         DrawRectangle(0, 0, GetScreenWidth(), 64, (Color){ 21, 41, 71, 255 });
-        DrawText("WAREHOUSE WMS", 20, 20, 24, RAYWHITE);
+                AppText("WAREHOUSE WMS", 20, 20, 22, RAYWHITE);
+
+        /* Right-aligned cluster: logout button anchored to the edge,
+           username text placed to its LEFT with a real gap - measured,
+           not guessed, so it can never collide with the button. */
+        int btn_w = 110, btn_h = 32, margin = 20;
+        Rectangle logout_rect = { GetScreenWidth() - margin - btn_w, 16, btn_w, btn_h };
+
+        char user_label[96];
+        snprintf(user_label, sizeof user_label, "%s (%s)", g_session.username, g_session.role);
+        Vector2 user_size = MeasureTextEx(g_appFont, user_label, 14, 1);
+        AppText(user_label, logout_rect.x - 16 - user_size.x, 24, 14, (Color){180,190,210,255});
+
+        bool logout_hover = CheckCollisionPointRec(GetMousePosition(), logout_rect);
+        DrawRectangleRounded(logout_rect, 0.25f, 6, logout_hover ? (Color){153,27,27,255} : (Color){71,85,105,255});
+        Vector2 logout_tsize = MeasureTextEx(g_appFont, "Deconnexion", 14, 1);
+        AppText("Deconnexion", logout_rect.x + logout_rect.width/2 - logout_tsize.x/2,
+                 logout_rect.y + 8, 14, WHITE);
+
         char subtitle[64];
         snprintf(subtitle, sizeof subtitle, "%d produits", total_products);
-        DrawText(subtitle, GetScreenWidth() - 160, 24, 16, (Color){180,190,210,255});
+        AppText(subtitle, 20, 44, 14, (Color){180,190,210,255});
 
-        /* Logged-in user + logout, per the login/session feature */
-        DrawText(TextFormat("%s (%s)", g_session.username, g_session.role),
-                  GetScreenWidth() - 320, 44, 14, (Color){180,190,210,255});
-        if (GuiButton((Rectangle){ GetScreenWidth() - 100, 16, 80, 28 }, "Deconnexion")) {
+        if (logout_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             session_logout(db, &g_session);
             g_screen = SCREEN_LOGIN;
             login_username[0] = login_password[0] = '\0';
@@ -312,14 +348,12 @@ void gui_run(WmsDb *db) {
         int tx = 20, ty = 140;
         int col_sku = tx, col_name = tx + 110, col_cat = tx + 380,
             col_qty = tx + 540, col_price = tx + 640, col_alert = tx + 760;
-        DrawText("SKU", col_sku, ty, 14, DARKGRAY);
-        DrawText("Nom", col_name, ty, 14, DARKGRAY);
-        DrawText("Categorie", col_cat, ty, 14, DARKGRAY);
-        DrawText("Qte", col_qty, ty, 14, DARKGRAY);
-        DrawText("Prix", col_price, ty, 14, DARKGRAY);
-        DrawText("Statut", col_alert, ty, 14, DARKGRAY);
-        DrawLine(tx, ty + 22, GetScreenWidth() - 20, ty + 22, LIGHTGRAY);
-
+        AppText("SKU", col_sku, ty, 14, DARKGRAY);
+        AppText("Nom", col_name, ty, 14, DARKGRAY);
+        AppText("Categorie", col_cat, ty, 14, DARKGRAY);
+        AppText("Qte", col_qty, ty, 14, DARKGRAY);
+        AppText("Prix", col_price, ty, 14, DARKGRAY);
+        AppText("Statut", col_alert, ty, 14, DARKGRAY);
         int row_y = ty + 32;
         int start = page * PAGE_SIZE;
         int shown_this_page = 0;
@@ -335,9 +369,9 @@ void gui_run(WmsDb *db) {
 
             if (hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) selected_index = i;
 
-            DrawText(p->sku, col_sku, row_y, 14, BLACK);
-            DrawText(p->name, col_name, row_y, 14, BLACK);
-            DrawText(p->category, col_cat, row_y, 14, BLACK);
+            AppText(p->sku, col_sku, row_y, 14, BLACK);
+            AppText(p->name, col_name, row_y, 14, BLACK);
+            AppText(p->category, col_cat, row_y, 14, BLACK);
 
             char qty_buf[16];
             snprintf(qty_buf, sizeof qty_buf, "%d", p->total_quantity);
