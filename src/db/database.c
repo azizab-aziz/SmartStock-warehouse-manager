@@ -7,9 +7,12 @@
 #include <sodium.h>
 
 bool db_open(WmsDb *db, const char *path) {
+    if (sodium_init() < 0) {
+        fprintf(stderr, "db_open: sodium_init failed\n");
+        return false;
+    }
     memset(db, 0, sizeof(*db));
     strncpy(db->path, path, sizeof(db->path) - 1);
-
     if (sqlite3_open(path, &db->handle) != SQLITE_OK) {
         fprintf(stderr, "db_open: %s\n", sqlite3_errmsg(db->handle));
         return false;
