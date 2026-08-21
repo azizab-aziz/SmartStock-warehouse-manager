@@ -35,15 +35,25 @@ int main(void) {
 
         /* Ensure at least one location exists, since movements currently
        hardcode location_id=1 (a real location picker is a later feature). */
-    sqlite3_exec(db.handle,
-        "INSERT OR IGNORE INTO locations (id, code, capacity) VALUES (1, 'A-01-01', 9999);",
-        NULL, NULL, NULL);
+    char *loc_err = NULL;
+int loc_rc = sqlite3_exec(db.handle,
+    "INSERT OR IGNORE INTO locations (id, code, capacity) VALUES (1, 'A-01-01', 9999);",
+    NULL, NULL, &loc_err);
 
-        sqlite3_stmt *dbg;
-sqlite3_prepare_v2(db.handle, "SELECT id FROM locations;", -1, &dbg, NULL);
-while (sqlite3_step(dbg) == SQLITE_ROW)
-    printf("location id=%d exists\n", sqlite3_column_int(dbg, 0));
-sqlite3_finalize(dbg);
+FILE *loc_log = fopen("debug_insert.txt", "w");
+fprintf(loc_log, "rc=%d changes=%d err=%s\n", loc_rc, sqlite3_changes(db.handle),
+        loc_err ? loc_err : "(none)");
+if (loc_err) sqlite3_free(loc_err);
+fclose(loc_log);
+
+            FILE *dbg_log = fopen("debug_locations.txt", "w");
+    sqlite3_stmt *dbg;
+    sqlite3_prepare_v2(db.handle, "SELECT id, code FROM locations;", -1, &dbg, NULL);
+    while (sqlite3_step(dbg) == SQLITE_ROW)
+        fprintf(dbg_log, "location id=%d code=%s\n", sqlite3_column_int(dbg,0), sqlite3_column_text(dbg,1));
+    fclose(dbg_log);
+
+
 
         /* TEMPORARY - seed one admin user, then delete this block */
     char seed_err[256];
