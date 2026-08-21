@@ -371,7 +371,10 @@ void gui_run(WmsDb *db) {
 
             AppText(p->sku, col_sku, row_y, 14, BLACK);
             AppText(p->name, col_name, row_y, 14, BLACK);
-            AppText(p->category, col_cat, row_y, 14, BLACK);
+           int cat_max_width = col_qty - col_cat - 10; /* leave a 10px gap before Qte column */
+           BeginScissorMode(col_cat, row_y - 2, cat_max_width, 20);
+           AppText(p->category, col_cat, row_y, 14, BLACK);
+           EndScissorMode();
 
             char qty_buf[16];
             snprintf(qty_buf, sizeof qty_buf, "%d", p->total_quantity);

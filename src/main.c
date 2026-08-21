@@ -3,6 +3,7 @@
 #include "gui.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <sqlite3.h>
 
 int main(void) {
     WmsDb db;
@@ -10,9 +11,9 @@ int main(void) {
     /* saves/ is created next to the executable, matching the structure
        described in the spec (saves/historique, saves/backup, saves/exports) */
     system("mkdir saves 2>nul");
-system("mkdir saves\\historique 2>nul");
-system("mkdir saves\\backup 2>nul");
-system("mkdir saves\\exports 2>nul");
+    system("mkdir saves\\historique 2>nul");
+    system("mkdir saves\\backup 2>nul");
+    system("mkdir saves\\exports 2>nul");
 
     if (!db_open(&db, "saves/warehouse.db")) {
         fprintf(stderr, "Impossible d'ouvrir la base de donnees.\n");
@@ -31,6 +32,18 @@ system("mkdir saves\\exports 2>nul");
         db_close(&db);
         return 1;
     }
+
+        /* Ensure at least one location exists, since movements currently
+       hardcode location_id=1 (a real location picker is a later feature). */
+    sqlite3_exec(db.handle,
+        "INSERT OR IGNORE INTO locations (id, code, capacity) VALUES (1, 'A-01-01', 9999);",
+        NULL, NULL, NULL);
+
+        sqlite3_stmt *dbg;
+sqlite3_prepare_v2(db.handle, "SELECT id FROM locations;", -1, &dbg, NULL);
+while (sqlite3_step(dbg) == SQLITE_ROW)
+    printf("location id=%d exists\n", sqlite3_column_int(dbg, 0));
+sqlite3_finalize(dbg);
 
         /* TEMPORARY - seed one admin user, then delete this block */
     char seed_err[256];
