@@ -35,7 +35,7 @@ int main(void) {
 
         /* Ensure at least one location exists, since movements currently
        hardcode location_id=1 (a real location picker is a later feature). */
-    char *loc_err = NULL;
+   char *loc_err = NULL;
 int loc_rc = sqlite3_exec(db.handle,
     "INSERT OR IGNORE INTO locations (id, code, capacity) VALUES (1, 'A-01-01', 9999);",
     NULL, NULL, &loc_err);
@@ -43,6 +43,16 @@ int loc_rc = sqlite3_exec(db.handle,
 FILE *loc_log = fopen("debug_insert.txt", "w");
 fprintf(loc_log, "rc=%d changes=%d err=%s\n", loc_rc, sqlite3_changes(db.handle),
         loc_err ? loc_err : "(none)");
+
+/* NEW: immediately re-check if it's really there */
+sqlite3_stmt *verify;
+sqlite3_prepare_v2(db.handle, "SELECT COUNT(*) FROM locations;", -1, &verify, NULL);
+sqlite3_step(verify);
+fprintf(loc_log, "total locations right after insert = %d\n", sqlite3_column_int(verify, 0));
+sqlite3_finalize(verify);
+
+if (loc_err) sqlite3_free(loc_err);
+fclose(loc_log);
 if (loc_err) sqlite3_free(loc_err);
 fclose(loc_log);
 

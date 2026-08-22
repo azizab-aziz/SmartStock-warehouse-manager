@@ -290,16 +290,50 @@ bool inv_post_movement(int product_id, int location_id, int delta,
         return false;
     }
 
-    sqlite3_stmt *st;
+        FILE *fk_log = fopen("debug_fk_check.txt", "w");
+    sqlite3_stmt *pchk;
+    sqlite3_prepare_v2(g_db->handle, "SELECT id, sku FROM products WHERE id=?;", -1, &pchk, NULL);
+    sqlite3_bind_int(pchk, 1, product_id);
+    if (sqlite3_step(pchk) == SQLITE_ROW)
+        fprintf(fk_log, "product_id=%d EXISTS, sku=%s\n", product_id, sqlite3_column_text(pchk, 0));
+    else
+        fprintf(fk_log, "product_id=%d DOES NOT EXIST in products table\n", product_id);
+    sqlite3_finalize(pchk);
+
+    sqlite3_stmt *lchk;
+    sqlite3_prepare_v2(g_db->handle, "SELECT id, code FROM locations WHERE id=?;", -1, &lchk, NULL);
+    sqlite3_bind_int(lchk, 1, location_id);
+    if (sqlite3_step(lchk) == SQLITE_ROW)
+        fprintf(fk_log, "location_id=%d EXISTS, code=%s\n", location_id, sqlite3_column_text(lchk, 0));
+    else
+        fprintf(fk_log, "location_id=%d DOES NOT EXIST in locations table\n", location_id);
+    sqlite3_finalize(lchk);
+
+    sqlite3_stmt *fkchk;
+    sqlite3_prepare_v2(g_db->handle, "PRAGMA foreign_keys;", -1, &fkchk, NULL);
+    if (sqlite3_step(fkchk) == SQLITE_ROW)
+        fprintf(fk_log, "foreign_keys pragma = %d\n", sqlite3_column_int(fkchk, 0));
+    sqlite3_finalize(fkchk);
+    fclose(fk_log);
+
+        sqlite3_stmt *st;
     sqlite3_prepare_v2(g_db->handle,
         "INSERT INTO stock (product_id, location_id, quantity) VALUES (?,?,0) "
         "ON CONFLICT(product_id, location_id) DO NOTHING;", -1, &st, NULL);
     sqlite3_bind_int(st, 1, product_id);
     sqlite3_bind_int(st, 2, location_id);
-    sqlite3_step(st);
+    int insert_rc = sqlite3_step(st);
+    int insert_changes = sqlite3_changes(g_db->handle);
+    const char *insert_err = sqlite3_errmsg(g_db->handle);
+
+    FILE *ins_log = fopen("debug_insert_stock.txt", "w");
+    fprintf(ins_log, "product_id=%d location_id=%d insert_rc=%d changes=%d err=%s\n",
+             product_id, location_id, insert_rc, insert_changes, insert_err);
+    fclose(ins_log);
+
     sqlite3_finalize(st);
 
-    sqlite3_prepare_v2(g_db->handle,
+       sqlite3_prepare_v2(g_db->handle,
         "UPDATE stock SET quantity = quantity + ? "
         "WHERE product_id = ? AND location_id = ? AND quantity + ? >= 0;",
         -1, &st, NULL);
@@ -308,14 +342,33 @@ bool inv_post_movement(int product_id, int location_id, int delta,
     sqlite3_bind_int(st, 3, location_id);
     sqlite3_bind_int(st, 4, delta);
     int rc = sqlite3_step(st);
+    int changes_after_update = sqlite3_changes(g_db->handle);
     sqlite3_finalize(st);
+
+    /* --- DEBUG --- */
+    FILE *mv_log = fopen("debug_movement.txt", "w");
+    fprintf(mv_log, "product_id=%d location_id=%d delta=%d rc=%d changes=%d\n",
+             product_id, location_id, delta, rc, changes_after_update);
+
+    sqlite3_stmt *chk;
+    sqlite3_prepare_v2(g_db->handle,
+        "SELECT quantity FROM stock WHERE product_id=? AND location_id=?;", -1, &chk, NULL);
+    sqlite3_bind_int(chk, 1, product_id);
+    sqlite3_bind_int(chk, 2, location_id);
+    if (sqlite3_step(chk) == SQLITE_ROW)
+        fprintf(mv_log, "existing stock row quantity=%d\n", sqlite3_column_int(chk, 0));
+    else
+        fprintf(mv_log, "NO stock row exists for this product+location\n");
+    sqlite3_finalize(chk);
+    fclose(mv_log);
+    /* --- END DEBUG --- */
 
     if (rc != SQLITE_DONE) {
         set_err(err_out, err_len, sqlite3_errmsg(g_db->handle));
         db_rollback(g_db);
         return false;
     }
-    if (sqlite3_changes(g_db->handle) == 0) {
+    if (changes_after_update == 0) {
         set_err(err_out, err_len, "Stock insuffisant a cet emplacement");
         db_rollback(g_db);
         return false;
