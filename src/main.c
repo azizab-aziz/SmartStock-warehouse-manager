@@ -63,8 +63,9 @@ fclose(schema_log);
         /* Ensure at least one location exists, since movements currently
        hardcode location_id=1 (a real location picker is a later feature). */
    char *loc_err = NULL;
-int loc_rc = sqlite3_exec(db.handle,
-    "INSERT OR IGNORE INTO locations (id, code, capacity) VALUES (1, 'A-01-01', 9999);",
+   int loc_rc = sqlite3_exec(db.handle,
+    "INSERT OR IGNORE INTO locations (id, code, aisle, shelf, bin, capacity) "
+    "VALUES (1, 'A-01-01', 'A', '01', '01', 9999);",
     NULL, NULL, &loc_err);
 
 FILE *loc_log = fopen("debug_insert.txt", "w");
