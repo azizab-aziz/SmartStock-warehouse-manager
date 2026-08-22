@@ -27,6 +27,9 @@ static Screen  g_screen = SCREEN_LOGIN;
 static Session g_session = {0};
 static Font g_appFont;
 static Font g_appFontBold;
+static Texture2D g_logoLockupLight;
+static Texture2D g_logoLockupDark;
+static bool g_logoLoaded = false;
 
 static void AppText(const char *text, int x, int y, int size, Color color);
 static void AppTextBold(const char *text, int x, int y, int size, Color color);
@@ -95,8 +98,14 @@ static void draw_login_screen(WmsDb *db) {
         DrawRectangleRounded((Rectangle){ px, py, panel_w, panel_h }, 0.06f, 8, WHITE);
         DrawRectangleRoundedLines((Rectangle){ px, py, panel_w, panel_h }, 0.06f, 8, 1, COLOR_BORDER);
 
-        AppText("SmartStock", px + 24, py + 24, 22, (Color){30,41,59,255});
-        AppText("Connexion a votre espace", px + 24, py + 54, 14, COLOR_TEXT_MUTED);
+        if (g_logoLoaded) {
+            float logo_h = 44, logo_w = g_logoLockupLight.width * (logo_h / g_logoLockupLight.height);
+            DrawTextureEx(g_logoLockupLight, (Vector2){ px + 24, py + 20 }, 0, logo_h / g_logoLockupLight.height, WHITE);
+            AppText("Connexion a votre espace", px + 24, py + 20 + logo_h + 8, 14, COLOR_TEXT_MUTED);
+        } else {
+            AppTextBold("SmartStock", px + 24, py + 24, 22, (Color){30,41,59,255});
+            AppText("Connexion a votre espace", px + 24, py + 54, 14, COLOR_TEXT_MUTED);
+        }
 
         if (!username_edit && !password_edit) username_edit = true; /* default focus */
         bool *login_fields[2] = { &username_edit, &password_edit };
@@ -248,9 +257,19 @@ static void AppText(const char *text, int x, int y, int size, Color color) {
     DrawTextEx(g_appFont, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
 }
 
+static void AppTextBold(const char *text, int x, int y, int size, Color color) {
+    DrawTextEx(g_appFontBold, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
+}
+
 void gui_run(WmsDb *db) {
         InitWindow(SCREEN_W, SCREEN_H, "Gestion de Stock - Warehouse WMS");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
+
+    Image iconImg = LoadImage("resources/icons/logo_mark_256.png");
+    if (iconImg.data != NULL) {
+        SetWindowIcon(iconImg);
+        UnloadImage(iconImg);
+    }
     SetTargetFPS(60);
 
     /* Load Segoe UI per spec; fall back to raylib's default if unavailable
@@ -267,7 +286,9 @@ void gui_run(WmsDb *db) {
         codepoints[cp_count++] = french_extra[i];
 
     Font appFont = LoadFontEx("resources/fonts/Inter-Regular.ttf", 48, codepoints, cp_count);
-    if (appFont.texture.id == 0) appFont = GetFontDefault();
+    g_logoLockupLight = LoadTexture("resources/icons/logo_lockup_light.png");
+    g_logoLockupDark  = LoadTexture("resources/icons/logo_lockup_dark.png");
+    g_logoLoaded = (g_logoLockupLight.id != 0 && g_logoLockupDark.id != 0);
     SetTextureFilter(appFont.texture, TEXTURE_FILTER_BILINEAR);
     GuiSetFont(appFont);
     g_appFont = appFont;   /* see Part 2 - stored globally so DrawText calls can use it too */
@@ -356,7 +377,11 @@ void gui_run(WmsDb *db) {
 
         /* Header bar - navy */
         DrawRectangle(0, 0, GetScreenWidth(), 64, (Color){ 21, 41, 71, 255 });
-                AppText("WAREHOUSE WMS", 20, 20, 22, RAYWHITE);
+        if (g_logoLoaded) {
+            DrawTextureEx(g_logoLockupLight, (Vector2){ 20, 12 }, 0, 40.0f / g_logoLockupLight.height, WHITE);
+        } else {
+            AppTextBold("WAREHOUSE WMS", 20, 20, 22, RAYWHITE);
+        }
 
         /* Right-aligned cluster: logout button anchored to the edge,
            username text placed to its LEFT with a real gap - measured,
