@@ -27,11 +27,38 @@ int main(void) {
         db_close(&db);
         return 1;
     }
+    FILE *path_log = fopen("debug_dbpath.txt", "w");
+    fprintf(path_log, "Actual DB file in use: %s\n", sqlite3_db_filename(db.handle, "main"));
+    fclose(path_log);
     if (!inv_init(&db)) {
         fprintf(stderr, "Impossible d'initialiser l'inventaire.\n");
         db_close(&db);
         return 1;
     }
+
+    FILE *schema_log = fopen("debug_schema.txt", "w");
+sqlite3_stmt *sc;
+sqlite3_prepare_v2(db.handle, "SELECT sql FROM sqlite_master WHERE type='table' AND name='locations';", -1, &sc, NULL);
+if (sqlite3_step(sc) == SQLITE_ROW)
+    fprintf(schema_log, "locations table schema:\n%s\n", sqlite3_column_text(sc, 0));
+else
+    fprintf(schema_log, "locations table does not exist at all!\n");
+sqlite3_finalize(sc);
+
+sqlite3_stmt *rows;
+sqlite3_prepare_v2(db.handle, "SELECT * FROM locations;", -1, &rows, NULL);
+int ncols = sqlite3_column_count(rows);
+int rowcount = 0;
+while (sqlite3_step(rows) == SQLITE_ROW) {
+    rowcount++;
+    fprintf(schema_log, "row: ");
+    for (int i = 0; i < ncols; i++)
+        fprintf(schema_log, "%s=%s ", sqlite3_column_name(rows, i), sqlite3_column_text(rows, i));
+    fprintf(schema_log, "\n");
+}
+fprintf(schema_log, "total rows = %d\n", rowcount);
+sqlite3_finalize(rows);
+fclose(schema_log);
 
         /* Ensure at least one location exists, since movements currently
        hardcode location_id=1 (a real location picker is a later feature). */
