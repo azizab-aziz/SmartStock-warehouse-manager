@@ -27,69 +27,26 @@ int main(void) {
         db_close(&db);
         return 1;
     }
-    FILE *path_log = fopen("debug_dbpath.txt", "w");
-    fprintf(path_log, "Actual DB file in use: %s\n", sqlite3_db_filename(db.handle, "main"));
-    fclose(path_log);
+
     if (!inv_init(&db)) {
         fprintf(stderr, "Impossible d'initialiser l'inventaire.\n");
         db_close(&db);
         return 1;
     }
 
-    FILE *schema_log = fopen("debug_schema.txt", "w");
-sqlite3_stmt *sc;
-sqlite3_prepare_v2(db.handle, "SELECT sql FROM sqlite_master WHERE type='table' AND name='locations';", -1, &sc, NULL);
-if (sqlite3_step(sc) == SQLITE_ROW)
-    fprintf(schema_log, "locations table schema:\n%s\n", sqlite3_column_text(sc, 0));
-else
-    fprintf(schema_log, "locations table does not exist at all!\n");
-sqlite3_finalize(sc);
 
-sqlite3_stmt *rows;
-sqlite3_prepare_v2(db.handle, "SELECT * FROM locations;", -1, &rows, NULL);
-int ncols = sqlite3_column_count(rows);
-int rowcount = 0;
-while (sqlite3_step(rows) == SQLITE_ROW) {
-    rowcount++;
-    fprintf(schema_log, "row: ");
-    for (int i = 0; i < ncols; i++)
-        fprintf(schema_log, "%s=%s ", sqlite3_column_name(rows, i), sqlite3_column_text(rows, i));
-    fprintf(schema_log, "\n");
-}
-fprintf(schema_log, "total rows = %d\n", rowcount);
-sqlite3_finalize(rows);
-fclose(schema_log);
 
         /* Ensure at least one location exists, since movements currently
        hardcode location_id=1 (a real location picker is a later feature). */
    char *loc_err = NULL;
-   int loc_rc = sqlite3_exec(db.handle,
+int loc_rc = sqlite3_exec(db.handle,
     "INSERT OR IGNORE INTO locations (id, code, aisle, shelf, bin, capacity) "
     "VALUES (1, 'A-01-01', 'A', '01', '01', 9999);",
     NULL, NULL, &loc_err);
-
-FILE *loc_log = fopen("debug_insert.txt", "w");
-fprintf(loc_log, "rc=%d changes=%d err=%s\n", loc_rc, sqlite3_changes(db.handle),
-        loc_err ? loc_err : "(none)");
-
-/* NEW: immediately re-check if it's really there */
-sqlite3_stmt *verify;
-sqlite3_prepare_v2(db.handle, "SELECT COUNT(*) FROM locations;", -1, &verify, NULL);
-sqlite3_step(verify);
-fprintf(loc_log, "total locations right after insert = %d\n", sqlite3_column_int(verify, 0));
-sqlite3_finalize(verify);
-
 if (loc_err) sqlite3_free(loc_err);
-fclose(loc_log);
-if (loc_err) sqlite3_free(loc_err);
-fclose(loc_log);
 
-            FILE *dbg_log = fopen("debug_locations.txt", "w");
-    sqlite3_stmt *dbg;
-    sqlite3_prepare_v2(db.handle, "SELECT id, code FROM locations;", -1, &dbg, NULL);
-    while (sqlite3_step(dbg) == SQLITE_ROW)
-        fprintf(dbg_log, "location id=%d code=%s\n", sqlite3_column_int(dbg,0), sqlite3_column_text(dbg,1));
-    fclose(dbg_log);
+
+
 
 
 
