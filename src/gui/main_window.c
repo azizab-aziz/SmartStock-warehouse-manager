@@ -7,6 +7,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <math.h>
 
 #define PAGE_SIZE 10
 #define SCREEN_W  1024
@@ -22,13 +23,15 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_LOGIN, SCREEN_MAIN } Screen;
-static Screen  g_screen = SCREEN_LOGIN;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_MAIN } Screen;
+static Screen  g_screen = SCREEN_SPLASH;
+static float   g_splashTimer = 0.0f;
 static Session g_session = {0};
 static Font g_appFont;
 static Font g_appFontBold;
 static Texture2D g_logoLockupLight;
 static Texture2D g_logoLockupDark;
+static Texture2D g_logoMark;
 static bool g_logoLoaded = false;
 
 static void AppText(const char *text, int x, int y, int size, Color color);
@@ -87,7 +90,38 @@ static NavResult nav_handle_focus(bool **edit_flags, int count) {
 
 }
 
+static void draw_splash_screen(void) {
+    ClearBackground(COLOR_NAVY_DARK);
 
+    float t = g_splashTimer;
+    const float total = 1.8f; /* total splash duration in seconds */
+
+    /* Logo scales up and fades in during the first 0.6s, holds, then the
+       whole screen fades out during the last 0.4s. */
+    float scale_progress = fminf(t / 0.5f, 1.0f);
+    float ease = 1.0f - (1.0f - scale_progress) * (1.0f - scale_progress); /* ease-out */
+    float logo_scale = 0.7f + 0.3f * ease;
+
+    float fade_out_start = total - 0.4f;
+    float alpha = (t > fade_out_start) ? fmaxf(0.0f, 1.0f - (t - fade_out_start) / 0.4f) : 1.0f;
+
+    float logo_size = 140.0f * logo_scale;
+    float lx = GetScreenWidth()/2 - logo_size/2;
+    float ly = GetScreenHeight()/2 - logo_size/2 - 30;
+
+    Color tint = { 255, 255, 255, (unsigned char)(255 * alpha) };
+    DrawTextureEx(g_logoMark, (Vector2){ lx, ly }, 0, logo_size / g_logoMark.height, tint);
+
+    const char *title = "SmartStock";
+    Vector2 tsize = MeasureTextEx(g_appFontBold, title, 30, 1);
+    Color title_color = { 255, 255, 255, (unsigned char)(255 * fminf(alpha, ease)) };
+    AppTextBold(title, GetScreenWidth()/2 - tsize.x/2, ly + logo_size + 20, 30, title_color);
+
+    g_splashTimer += GetFrameTime();
+    if (g_splashTimer >= total) {
+        g_screen = SCREEN_LOGIN;
+    }
+}
 
 static void draw_login_screen(WmsDb *db) {
     ClearBackground(COLOR_NAVY_DARK);
@@ -289,6 +323,7 @@ void gui_run(WmsDb *db) {
     g_logoLockupLight = LoadTexture("resources/icons/logo_lockup_light.png");
     g_logoLockupDark  = LoadTexture("resources/icons/logo_lockup_dark.png");
     g_logoLoaded = (g_logoLockupLight.id != 0 && g_logoLockupDark.id != 0);
+    g_logoMark = LoadTexture("resources/icons/logo_mark_256.png");
     SetTextureFilter(appFont.texture, TEXTURE_FILTER_BILINEAR);
     GuiSetFont(appFont);
     g_appFont = appFont;   /* see Part 2 - stored globally so DrawText calls can use it too */
@@ -346,6 +381,14 @@ void gui_run(WmsDb *db) {
             login_password[0] = '\0';
         }
 
+                /* ---- splash screen: shows once at startup, then auto-advances ---- */
+        if (g_screen == SCREEN_SPLASH) {
+            BeginDrawing();
+            draw_splash_screen();
+            EndDrawing();
+            continue;
+        }
+
         /* ---- login screen: draw it and skip everything else this frame ---- */
         if (g_screen == SCREEN_LOGIN) {
             BeginDrawing();
@@ -376,9 +419,11 @@ void gui_run(WmsDb *db) {
         ClearBackground((Color){ 245, 247, 250, 255 }); /* light neutral bg */
 
         /* Header bar - navy */
-        DrawRectangle(0, 0, GetScreenWidth(), 64, (Color){ 21, 41, 71, 255 });
+                DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+                float header_logo_h = 34.0f;
         if (g_logoLoaded) {
-            DrawTextureEx(g_logoLockupLight, (Vector2){ 20, 12 }, 0, 40.0f / g_logoLockupLight.height, WHITE);
+            DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0,
+                          header_logo_h / g_logoLockupDark.height, WHITE);
         } else {
             AppTextBold("WAREHOUSE WMS", 20, 20, 22, RAYWHITE);
         }
@@ -400,9 +445,9 @@ void gui_run(WmsDb *db) {
         AppText("Deconnexion", logout_rect.x + logout_rect.width/2 - logout_tsize.x/2,
                  logout_rect.y + 8, 14, WHITE);
 
-        char subtitle[64];
+                char subtitle[64];
         snprintf(subtitle, sizeof subtitle, "%d produits", total_products);
-        AppText(subtitle, 20, 44, 14, (Color){180,190,210,255});
+        AppText(subtitle, 20, 8 + header_logo_h + 4, 14, (Color){180,190,210,255});
 
         if (logout_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             session_logout(db, &g_session);
