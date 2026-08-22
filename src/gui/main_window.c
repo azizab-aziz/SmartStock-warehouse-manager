@@ -244,11 +244,11 @@ void gui_run(WmsDb *db) {
     ActivePanel panel = PANEL_NONE;
     Toast toast = {0};
 
-    /* Add-product form fields */
+        /* Add-product form fields */
     char f_sku[64] = {0}, f_name[128] = {0}, f_category[64] = {0};
-    char f_price[32] = {0}, f_threshold[16] = {0};
+    char f_price[32] = {0}, f_threshold[16] = {0}, f_initial_qty[16] = {0};
     bool edit_sku = false, edit_name = false, edit_cat = false,
-         edit_price = false, edit_threshold = false;
+         edit_price = false, edit_threshold = false, edit_initial_qty = false;
 
     /* Movement form fields */
     char m_qty[16] = {0};
@@ -337,7 +337,7 @@ void gui_run(WmsDb *db) {
 
         if (GuiButton((Rectangle){ sx + sw + 10, sy, 160, sh }, "+ Nouveau produit")) {
             panel = PANEL_ADD_PRODUCT;
-            f_sku[0] = f_name[0] = f_category[0] = f_price[0] = f_threshold[0] = '\0';
+            f_sku[0] = f_name[0] = f_category[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
         }
         if (GuiButton((Rectangle){ sx + sw + 180, sy, 140, sh }, "Mouvement stock")) {
             if (selected_index >= 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
@@ -422,9 +422,13 @@ void gui_run(WmsDb *db) {
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Prix unitaire");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_price, sizeof f_price, edit_price)) edit_price = !edit_price;
 
-            by += 34;
+             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Seuil alerte");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_threshold, sizeof f_threshold, edit_threshold)) edit_threshold = !edit_threshold;
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Quantite initiale");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_initial_qty, sizeof f_initial_qty, edit_initial_qty)) edit_initial_qty = !edit_initial_qty;
 
             by += 50;
             if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer")) {
@@ -436,12 +440,24 @@ void gui_run(WmsDb *db) {
                 np.unit_price = (float)atof(f_price);
                 np.alert_threshold = atoi(f_threshold);
 
-                char err[256];
+                                char err[256];
                 if (f_sku[0] == '\0' || f_name[0] == '\0') {
                     toast_show(&toast, "SKU et nom sont obligatoires", true);
                 } else if (inv_add_product(&np, err, sizeof err)) {
-                    toast_show(&toast, "Produit ajoute", false);
                     total_products = inv_all_products(&all_products);
+
+                    int initial_qty = atoi(f_initial_qty);
+                    if (initial_qty > 0) {
+                        Product *created = inv_find_by_sku(np.sku);
+                        if (created) {
+                            char mv_err[256];
+                            inv_post_movement(created->id, 1, initial_qty, MV_RECEPTION,
+                                               "STOCK-INITIAL", &g_session,
+                                               "Stock de depart a la creation", mv_err, sizeof mv_err);
+                            total_products = inv_all_products(&all_products);
+                        }
+                    }
+                    toast_show(&toast, "Produit ajoute", false);
                     panel = PANEL_NONE;
                 } else {
                     toast_show(&toast, err, true);
