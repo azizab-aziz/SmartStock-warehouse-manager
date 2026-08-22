@@ -57,14 +57,24 @@ static bool nav_handle_focus(bool **edit_flags, int count) {
         if (*edit_flags[i]) { current = i; break; }
     }
 
-    if (IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_DOWN)) {
+    /* Enter behaves differently depending on position:
+     *   - not on the last field  -> acts like Tab/↓, just moves focus
+     *   - on the last field      -> triggers submit (handled below)   */
+    bool move_forward = IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_DOWN) ||
+                         (IsKeyPressed(KEY_ENTER) && current < count - 1);
+
+    if (move_forward) {
         for (int i = 0; i < count; i++) *edit_flags[i] = false;
         current = (current + 1) % count;
         *edit_flags[current] = true;
-    } else if (IsKeyPressed(KEY_UP)) {
+        return false;
+    }
+
+    if (IsKeyPressed(KEY_UP)) {
         for (int i = 0; i < count; i++) *edit_flags[i] = false;
         current = (current - 1 + count) % count;
         *edit_flags[current] = true;
+        return false;
     }
 
     return (current == count - 1) && IsKeyPressed(KEY_ENTER);
