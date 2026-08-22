@@ -51,15 +51,15 @@ static bool su_username_edit = false, su_password_edit = false, su_confirm_edit 
  * count: how many fields in the group.
  * Returns true only when Enter is pressed while focus is on the LAST
  * field - the "auto-submit" trigger requested by the spec. */
-static bool nav_handle_focus(bool **edit_flags, int count) {
+typedef struct { bool moved; bool submit; } NavResult;
+
+static NavResult nav_handle_focus(bool **edit_flags, int count) {
+    NavResult r = { false, false };
     int current = 0;
     for (int i = 0; i < count; i++) {
         if (*edit_flags[i]) { current = i; break; }
     }
 
-    /* Enter behaves differently depending on position:
-     *   - not on the last field  -> acts like Tab/↓, just moves focus
-     *   - on the last field      -> triggers submit (handled below)   */
     bool move_forward = IsKeyPressed(KEY_TAB) || IsKeyPressed(KEY_DOWN) ||
                          (IsKeyPressed(KEY_ENTER) && current < count - 1);
 
@@ -67,17 +67,21 @@ static bool nav_handle_focus(bool **edit_flags, int count) {
         for (int i = 0; i < count; i++) *edit_flags[i] = false;
         current = (current + 1) % count;
         *edit_flags[current] = true;
-        return false;
+        r.moved = true;
+        return r;
     }
 
     if (IsKeyPressed(KEY_UP)) {
         for (int i = 0; i < count; i++) *edit_flags[i] = false;
         current = (current - 1 + count) % count;
         *edit_flags[current] = true;
-        return false;
+        r.moved = true;
+        return r;
     }
 
-    return (current == count - 1) && IsKeyPressed(KEY_ENTER);
+    r.submit = (current == count - 1) && IsKeyPressed(KEY_ENTER);
+    return r;
+
 }
 
 
@@ -94,20 +98,20 @@ static void draw_login_screen(WmsDb *db) {
         AppText("SmartStock", px + 24, py + 24, 22, (Color){30,41,59,255});
         AppText("Connexion a votre espace", px + 24, py + 54, 14, COLOR_TEXT_MUTED);
 
-               if (!username_edit && !password_edit) username_edit = true; /* default focus */
+        if (!username_edit && !password_edit) username_edit = true; /* default focus */
         bool *login_fields[2] = { &username_edit, &password_edit };
-        bool login_enter_submit = nav_handle_focus(login_fields, 2);
+        NavResult login_nav = nav_handle_focus(login_fields, 2);
 
         GuiLabel((Rectangle){ px + 24, py + 92, 100, 20 }, "Utilisateur");
         if (GuiTextBox((Rectangle){ px + 24, py + 114, panel_w - 48, 36 },
-                        login_username, sizeof(login_username), username_edit)) {
+                        login_username, sizeof(login_username), username_edit) && !login_nav.moved) {
             username_edit = !username_edit;
             if (username_edit) password_edit = false;
         }
 
         GuiLabel((Rectangle){ px + 24, py + 160, 100, 20 }, "Mot de passe");
         if (GuiTextBox((Rectangle){ px + 24, py + 182, panel_w - 48, 36 },
-                        login_password, sizeof(login_password), password_edit)) {
+                        login_password, sizeof(login_password), password_edit) && !login_nav.moved) {
             password_edit = !password_edit;
             if (password_edit) username_edit = false;
         }
@@ -118,7 +122,7 @@ static void draw_login_screen(WmsDb *db) {
         Vector2 tsize = MeasureTextEx(g_appFont, "Se connecter", 16, 1);
         AppText("Se connecter", submit_rect.x + submit_rect.width/2 - tsize.x/2,
                  submit_rect.y + 12, 16, WHITE);
-                bool submit = (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || login_enter_submit;
+        bool submit = (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) || login_nav.submit;
 
         if (submit) {
             char err[128];
@@ -154,32 +158,32 @@ static void draw_login_screen(WmsDb *db) {
     } else {
         /* ---- SIGNUP FORM ---- */
         GuiPanel((Rectangle){ px, py, panel_w, panel_h }, "SmartStock -- Creer un compte");
-        if (!su_username_edit && !su_password_edit && !su_confirm_edit) su_username_edit = true;
+                if (!su_username_edit && !su_password_edit && !su_confirm_edit) su_username_edit = true;
         bool *signup_fields[3] = { &su_username_edit, &su_password_edit, &su_confirm_edit };
-        bool signup_enter_submit = nav_handle_focus(signup_fields, 3);
+        NavResult signup_nav = nav_handle_focus(signup_fields, 3);
 
         GuiLabel((Rectangle){ px + 24, py + 50, 140, 24 }, "Utilisateur");
         if (GuiTextBox((Rectangle){ px + 24, py + 76, panel_w - 48, 32 },
-                        signup_username, sizeof(signup_username), su_username_edit)) {
+                        signup_username, sizeof(signup_username), su_username_edit) && !signup_nav.moved) {
             su_username_edit = !su_username_edit;
             if (su_username_edit) { su_password_edit = su_confirm_edit = false; }
         }
 
         GuiLabel((Rectangle){ px + 24, py + 116, 140, 24 }, "Mot de passe (8+ caracteres)");
         if (GuiTextBox((Rectangle){ px + 24, py + 142, panel_w - 48, 32 },
-                        signup_password, sizeof(signup_password), su_password_edit)) {
+                        signup_password, sizeof(signup_password), su_password_edit) && !signup_nav.moved) {
             su_password_edit = !su_password_edit;
             if (su_password_edit) { su_username_edit = su_confirm_edit = false; }
         }
 
         GuiLabel((Rectangle){ px + 24, py + 182, 140, 24 }, "Confirmer le mot de passe");
         if (GuiTextBox((Rectangle){ px + 24, py + 208, panel_w - 48, 32 },
-                        signup_confirm, sizeof(signup_confirm), su_confirm_edit)) {
+                        signup_confirm, sizeof(signup_confirm), su_confirm_edit) && !signup_nav.moved) {
             su_confirm_edit = !su_confirm_edit;
             if (su_confirm_edit) { su_username_edit = su_password_edit = false; }
         }
 
-        if (GuiButton((Rectangle){ px + 24, py + 256, panel_w - 48, 36 }, "S'inscrire") || signup_enter_submit) {
+        if (GuiButton((Rectangle){ px + 24, py + 256, panel_w - 48, 36 }, "S'inscrire") || signup_nav.submit) {
             if (strlen(signup_username) < 3) {
                 snprintf(login_error, sizeof(login_error), "Nom d'utilisateur trop court");
                 error_fade = 1.0f;
@@ -459,57 +463,57 @@ void gui_run(WmsDb *db) {
             Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 200, 440, 400 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, "Nouveau produit");
-            bool *edit_flags[6] = { &edit_sku, &edit_name, &edit_cat,
+                        bool *edit_flags[6] = { &edit_sku, &edit_name, &edit_cat,
                                      &edit_price, &edit_threshold, &edit_initial_qty };
             bool any_focused = edit_sku || edit_name || edit_cat ||
                                 edit_price || edit_threshold || edit_initial_qty;
             if (!any_focused) edit_sku = true;
-            bool addproduct_enter_submit = nav_handle_focus(edit_flags, 6);
+            NavResult addproduct_nav = nav_handle_focus(edit_flags, 6);
 
             float bx = box.x + 20, by = box.y + 40;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "SKU");
-            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_sku, sizeof f_sku, edit_sku)) {
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_sku, sizeof f_sku, edit_sku) && !addproduct_nav.moved) {
                 edit_sku = !edit_sku;
                 if (edit_sku) { edit_name = edit_cat = edit_price = edit_threshold = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Nom");
-            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_name, sizeof f_name, edit_name)) {
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_name, sizeof f_name, edit_name) && !addproduct_nav.moved) {
                 edit_name = !edit_name;
                 if (edit_name) { edit_sku = edit_cat = edit_price = edit_threshold = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Categorie");
-            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_category, sizeof f_category, edit_cat)) {
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_category, sizeof f_category, edit_cat) && !addproduct_nav.moved) {
                 edit_cat = !edit_cat;
                 if (edit_cat) { edit_sku = edit_name = edit_price = edit_threshold = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Prix unitaire");
-            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_price, sizeof f_price, edit_price)) {
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_price, sizeof f_price, edit_price) && !addproduct_nav.moved) {
                 edit_price = !edit_price;
                 if (edit_price) { edit_sku = edit_name = edit_cat = edit_threshold = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Seuil alerte");
-            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_threshold, sizeof f_threshold, edit_threshold)) {
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_threshold, sizeof f_threshold, edit_threshold) && !addproduct_nav.moved) {
                 edit_threshold = !edit_threshold;
                 if (edit_threshold) { edit_sku = edit_name = edit_cat = edit_price = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Quantite initiale");
-            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_initial_qty, sizeof f_initial_qty, edit_initial_qty)) {
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_initial_qty, sizeof f_initial_qty, edit_initial_qty) && !addproduct_nav.moved) {
                 edit_initial_qty = !edit_initial_qty;
                 if (edit_initial_qty) { edit_sku = edit_name = edit_cat = edit_price = edit_threshold = false; }
             }
 
             by += 50;
-            if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || addproduct_enter_submit) {
+            if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || addproduct_nav.submit) {
                 Product np = {0};
                 snprintf(np.sku, sizeof np.sku, "%s", f_sku);
                 snprintf(np.name, sizeof np.name, "%s", f_name);
@@ -560,17 +564,17 @@ void gui_run(WmsDb *db) {
             if (GuiButton((Rectangle){ bx + 100, by, 90, 30 }, movement_sign < 0 ? "[Sortie]" : "Sortie"))
                 movement_sign = -1;
 
-            if (!edit_qty) edit_qty = true; /* only one field - always focused */
+                        if (!edit_qty) edit_qty = true; /* only one field - always focused */
             bool *movement_fields[1] = { &edit_qty };
-            bool movement_enter_submit = nav_handle_focus(movement_fields, 1);
+            NavResult movement_nav = nav_handle_focus(movement_fields, 1);
 
             by += 40;
             GuiLabel((Rectangle){ bx, by, 90, 24 }, "Quantite");
-            if (GuiTextBox((Rectangle){ bx + 100, by, 100, 24 }, m_qty, sizeof m_qty, edit_qty))
+            if (GuiTextBox((Rectangle){ bx + 100, by, 100, 24 }, m_qty, sizeof m_qty, edit_qty) && !movement_nav.moved)
                 edit_qty = !edit_qty;
 
             by += 50;
-            if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Valider") || movement_enter_submit) {
+            if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Valider") || movement_nav.submit) {
                 int qty = atoi(m_qty);
                 if (qty <= 0) {
                     toast_show(&toast, "Quantite invalide", true);
