@@ -279,7 +279,12 @@ bool inv_delete_product(int product_id, const Session *session, char *err_out, s
        (NOT NULL FK), so a hard DELETE always violates that constraint.
        Marking inactive preserves the audit trail and sidesteps the FK
        issue entirely - same pattern as users.active. */
-    sqlite3_prepare_v2(g_db->handle, "UPDATE products SET active = 0 WHERE id=?;", -1, &st, NULL);
+        /* Soft delete: mark inactive AND clear category_id, so an inactive
+       product can never block a category deletion via the FK constraint
+       - the audit trail (movements) is preserved, but the category link
+       itself is no longer "in use" once the product is gone from view. */
+    sqlite3_prepare_v2(g_db->handle,
+        "UPDATE products SET active = 0, category_id = NULL WHERE id=?;", -1, &st, NULL);
     sqlite3_bind_int(st, 1, product_id);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
