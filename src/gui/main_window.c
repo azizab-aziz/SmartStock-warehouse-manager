@@ -126,7 +126,7 @@ static void draw_splash_screen(void) {
 static void draw_login_screen(WmsDb *db) {
     ClearBackground(COLOR_NAVY_DARK);
     int panel_w = 380, panel_h = signup_mode ? 400 : 340;
-    int px = (SCREEN_W - panel_w) / 2, py = (SCREEN_H - panel_h) / 2;
+    int px = (GetScreenWidth() - panel_w) / 2, py = (GetScreenHeight() - panel_h) / 2;
 
             if (!signup_mode) {
         DrawRectangleRounded((Rectangle){ px, py, panel_w, panel_h }, 0.06f, 8, WHITE);

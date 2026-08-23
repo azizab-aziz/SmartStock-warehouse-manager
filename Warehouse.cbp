@@ -66,6 +66,9 @@
 		<Unit filename="lib/sqlite3/sqlite3.c">
 			<Option compilerVar="CC" />
 		</Unit>
+		<Unit filename="resources/app_icon.rc">
+			<Option compilerVar="WINDRES" />
+		</Unit>
 		<Unit filename="src/core/hashtable.c">
 			<Option compilerVar="CC" />
 		</Unit>
