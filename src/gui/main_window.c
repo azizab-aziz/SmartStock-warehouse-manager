@@ -544,7 +544,7 @@ void gui_run(WmsDb *db) {
 
         /* ---- Add product panel (modal-ish) ---- */
                 if (panel == PANEL_ADD_PRODUCT) {
-            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 220, 440, 460 };
+            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 225, 440, 470 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, "Nouveau produit");
 
@@ -584,9 +584,10 @@ void gui_run(WmsDb *db) {
             if (cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 cat_dropdown_open = !cat_dropdown_open;
                 cat_adding_new = false;
+                edit_sku = edit_name = edit_price = edit_threshold = edit_initial_qty = false;
             }
 
-            by += 34;
+            by += 44;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Prix unitaire");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_price, sizeof f_price, edit_price) && !addproduct_nav.moved) {
                 edit_price = !edit_price;
@@ -668,10 +669,11 @@ void gui_run(WmsDb *db) {
                     bool add_hover = CheckCollisionPointRec(GetMousePosition(), add_row);
                     if (add_hover) DrawRectangleRec(add_row, (Color){239,246,255,255});
                     AppText("+ Ajouter nouvelle categorie", add_row.x + 8, add_row.y + 5, 14, COLOR_ACCENT_BLUE);
-                    if (add_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                                        if (add_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                         cat_adding_new = true;
                         f_new_cat_input[0] = '\0';
                         edit_new_cat = true;
+                        edit_sku = edit_name = edit_price = edit_threshold = edit_initial_qty = false;
                     }
 
                     for (int ci = 0; ci < total_categories; ci++) {
