@@ -543,10 +543,11 @@ void gui_run(WmsDb *db) {
         if (GuiButton((Rectangle){ tx + 220, pag_y, 70, 30 }, "Suiv >") && page + 1 < page_count) page++;
 
         /* ---- Add product panel (modal-ish) ---- */
-        if (panel == PANEL_ADD_PRODUCT) {
-            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 200, 440, 400 };
+                if (panel == PANEL_ADD_PRODUCT) {
+            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 220, 440, 460 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, "Nouveau produit");
+
             bool *edit_flags[5] = { &edit_sku, &edit_name,
                                      &edit_price, &edit_threshold, &edit_initial_qty };
             bool any_focused = edit_sku || edit_name ||
@@ -555,12 +556,12 @@ void gui_run(WmsDb *db) {
             NavResult addproduct_nav = nav_handle_focus(edit_flags, 5);
 
             float bx = box.x + 20, by = box.y + 40;
-                        GuiLabel((Rectangle){ bx, by, 100, 24 }, "SKU");
+
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "SKU");
             if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_sku, sizeof f_sku, edit_sku) && !addproduct_nav.moved) {
                 edit_sku = !edit_sku;
                 if (edit_sku) { edit_name = edit_price = edit_threshold = edit_initial_qty = false; }
             }
-
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Nom");
@@ -569,65 +570,87 @@ void gui_run(WmsDb *db) {
                 if (edit_name) { edit_sku = edit_price = edit_threshold = edit_initial_qty = false; }
             }
 
-                        by += 34;
+            by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Categorie");
-
             cat_field_rect = (Rectangle){ bx + 110, by, 280, 24 };
             bool cat_hover = CheckCollisionPointRec(GetMousePosition(), cat_field_rect);
             DrawRectangleRec(cat_field_rect, WHITE);
             DrawRectangleLinesEx(cat_field_rect, 1, cat_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
-
             const char *cat_display = f_category[0] ? f_category : "Choisir une categorie";
             AppText(cat_display, cat_field_rect.x + 8, cat_field_rect.y + 5, 14,
                      f_category[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
             AppText(cat_dropdown_open ? "^" : "v",
                      cat_field_rect.x + cat_field_rect.width - 18, cat_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-
             if (cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 cat_dropdown_open = !cat_dropdown_open;
                 cat_adding_new = false;
             }
 
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Prix unitaire");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_price, sizeof f_price, edit_price) && !addproduct_nav.moved) {
+                edit_price = !edit_price;
+                if (edit_price) { edit_sku = edit_name = edit_threshold = edit_initial_qty = false; }
+            }
 
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Seuil alerte");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_threshold, sizeof f_threshold, edit_threshold) && !addproduct_nav.moved) {
+                edit_threshold = !edit_threshold;
+                if (edit_threshold) { edit_sku = edit_name = edit_price = edit_initial_qty = false; }
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Quantite initiale");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_initial_qty, sizeof f_initial_qty, edit_initial_qty) && !addproduct_nav.moved) {
+                edit_initial_qty = !edit_initial_qty;
+                if (edit_initial_qty) { edit_sku = edit_name = edit_price = edit_threshold = false; }
+            }
 
             by += 50;
-            if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || addproduct_nav.submit) {
-                Product np = {0};
-                snprintf(np.sku, sizeof np.sku, "%s", f_sku);
-                snprintf(np.name, sizeof np.name, "%s", f_name);
-                snprintf(np.category, sizeof np.category, "%s", f_category);
-                snprintf(np.unit, sizeof np.unit, "pcs");
-                np.unit_price = (float)atof(f_price);
-                np.alert_threshold = atoi(f_threshold);
+            /* Guard: while the category dropdown is open, don't let clicks
+               "leak through" to Enregistrer/Annuler underneath - the
+               dropdown list is drawn on top of this area, so a click on a
+               category row would otherwise ALSO register on whichever
+               button happens to sit at that same pixel this frame. */
+            if (!cat_dropdown_open) {
+                if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || addproduct_nav.submit) {
+                    Product np = {0};
+                    snprintf(np.sku, sizeof np.sku, "%s", f_sku);
+                    snprintf(np.name, sizeof np.name, "%s", f_name);
+                    snprintf(np.category, sizeof np.category, "%s", f_category);
+                    snprintf(np.unit, sizeof np.unit, "pcs");
+                    np.unit_price = (float)atof(f_price);
+                    np.alert_threshold = atoi(f_threshold);
+                    np.category_id = f_category_id;
 
-                char err[256];
-                np.category_id = f_category_id;
+                    char err[256];
+                    if (f_sku[0] == '\0' || f_name[0] == '\0') {
+                        toast_show(&toast, "SKU et nom sont obligatoires", true);
+                    } else if (inv_add_product(&np, err, sizeof err)) {
+                        total_products = inv_all_products(&all_products);
+                        inv_refresh_categories(db);
+                        total_categories = inv_get_categories(&all_categories);
 
-                if (f_sku[0] == '\0' || f_name[0] == '\0') {
-                    toast_show(&toast, "SKU et nom sont obligatoires", true);
-                } else if (inv_add_product(&np, err, sizeof err)) {
-                    total_products = inv_all_products(&all_products);
-                    inv_refresh_categories(db);
-                    total_categories = inv_get_categories(&all_categories);
-
-                    int initial_qty = atoi(f_initial_qty);
-                    if (initial_qty > 0) {
-                        Product *created = inv_find_by_sku(np.sku);
-                        if (created) {
-                            char mv_err[256];
-                            inv_post_movement(created->id, 1, initial_qty, MV_RECEPTION,
-                                               "STOCK-INITIAL", &g_session,
-                                               "Stock de depart a la creation", mv_err, sizeof mv_err);
-                            total_products = inv_all_products(&all_products);
+                        int initial_qty = atoi(f_initial_qty);
+                        if (initial_qty > 0) {
+                            Product *created = inv_find_by_sku(np.sku);
+                            if (created) {
+                                char mv_err[256];
+                                inv_post_movement(created->id, 1, initial_qty, MV_RECEPTION,
+                                                   "STOCK-INITIAL", &g_session,
+                                                   "Stock de depart a la creation", mv_err, sizeof mv_err);
+                                total_products = inv_all_products(&all_products);
+                            }
                         }
+                        toast_show(&toast, "Produit ajoute", false);
+                        panel = PANEL_NONE;
+                    } else {
+                        toast_show(&toast, err, true);
                     }
-                    toast_show(&toast, "Produit ajoute", false);
-                    panel = PANEL_NONE;
-                } else {
-                    toast_show(&toast, err, true);
                 }
+                if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Annuler")) panel = PANEL_NONE;
             }
-            if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Annuler")) panel = PANEL_NONE;
 
             /* Category dropdown - drawn LAST so it always renders on top of
                every field below it (Prix unitaire, Seuil alerte, etc.)
@@ -699,7 +722,6 @@ void gui_run(WmsDb *db) {
                 }
             }
         }
-
 
         /* ---- Movement panel ---- */
         if (panel == PANEL_MOVEMENT && selected_index >= 0) {
