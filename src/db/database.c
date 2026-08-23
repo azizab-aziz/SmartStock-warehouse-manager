@@ -261,3 +261,29 @@ int db_count_products_in_category(WmsDb *db, int category_id) {
     sqlite3_finalize(st);
     return count;
 }
+
+int db_list_users(WmsDb *db, int *out_ids, char names[][64], char roles[][16], int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT id, username, role FROM users ORDER BY username;", -1, &st, NULL);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        out_ids[n] = sqlite3_column_int(st, 0);
+        snprintf(names[n], 64, "%s", (const char*)sqlite3_column_text(st, 1));
+        snprintf(roles[n], 16, "%s", (const char*)sqlite3_column_text(st, 2));
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+bool db_update_user_role(WmsDb *db, int user_id, const char *new_role) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "UPDATE users SET role = ?1 WHERE id = ?2;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, new_role, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 2, user_id);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    return ok;
+}

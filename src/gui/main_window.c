@@ -273,7 +273,8 @@ static void draw_login_screen(WmsDb *db) {
 
 typedef enum { PANEL_NONE, PANEL_ADD_PRODUCT, PANEL_MOVEMENT,
                PANEL_EDIT_PRODUCT, PANEL_CONFIRM_DELETE_PRODUCT,
-               PANEL_MANAGE_CATEGORIES, PANEL_CONFIRM_DELETE_CATEGORY } ActivePanel;
+               PANEL_MANAGE_CATEGORIES, PANEL_CONFIRM_DELETE_CATEGORY,
+               PANEL_MANAGE_USERS } ActivePanel;
 
 /* Small helper: a message that fades out after ~1.5s, per the spec
  * ("Messages de succes avec fade-out apres chaque action"). */
@@ -398,6 +399,11 @@ void gui_run(WmsDb *db) {
     /* Category management panel */
     int delete_category_id = 0;
     char delete_category_name[64] = {0};
+    /* User management panel (admin only) */
+    int  mgmt_user_ids[64];
+    char mgmt_user_names[64][64];
+    char mgmt_user_roles[64][16];
+    int  mgmt_user_count = 0;
 
     while (!WindowShouldClose()) {
 
@@ -541,6 +547,14 @@ void gui_run(WmsDb *db) {
 
         if (GuiButton((Rectangle){ tx, toolbar_y, 150, sh }, "Gerer categories")) {
             panel = PANEL_MANAGE_CATEGORIES;
+        }
+
+        tx += 150 + btn_gap;
+        if (session_can(&g_session, "user.manage")) {
+            if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "Gerer utilisateurs")) {
+                mgmt_user_count = db_list_users(db, mgmt_user_ids, mgmt_user_names, mgmt_user_roles, 64);
+                panel = PANEL_MANAGE_USERS;
+            }
         }
 
         /* Table header */
@@ -958,6 +972,48 @@ void gui_run(WmsDb *db) {
                 }
             }
             if (GuiButton((Rectangle){ bx + 180, by, 160, 34 }, "Annuler")) panel = PANEL_MANAGE_CATEGORIES;
+        }
+
+                /* ---- Manage users panel (admin only) ---- */
+        if (panel == PANEL_MANAGE_USERS) {
+            float list_h = 36.0f * (mgmt_user_count > 0 ? mgmt_user_count : 1) + 90;
+            Rectangle box = { GetScreenWidth()/2 - 260, GetScreenHeight()/2 - list_h/2, 520, list_h };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            GuiPanel(box, "Gerer les utilisateurs");
+
+            float bx = box.x + 20, by = box.y + 40;
+            const char *roles[3] = { "operateur", "manager", "admin" };
+
+            for (int ui = 0; ui < mgmt_user_count; ui++) {
+                AppText(mgmt_user_names[ui], bx, by + 6, 14, (Color){30,41,59,255});
+
+                /* Three small role buttons - click to set that user's role.
+                   Current role shown highlighted, matching the earlier
+                   "[Entree]"/"Entree" toggle-button pattern already used
+                   in the movement panel. */
+                for (int ri = 0; ri < 3; ri++) {
+                    bool is_current = strcmp(mgmt_user_roles[ui], roles[ri]) == 0;
+                    Rectangle rbtn = { box.x + box.width - 300 + ri * 100, by, 90, 28 };
+                    bool hover = CheckCollisionPointRec(GetMousePosition(), rbtn);
+                    DrawRectangleRec(rbtn, is_current ? COLOR_ACCENT_BLUE :
+                                             (hover ? (Color){239,246,255,255} : WHITE));
+                    DrawRectangleLinesEx(rbtn, 1, COLOR_BORDER);
+                    AppText(roles[ri], rbtn.x + 6, rbtn.y + 6, 12,
+                             is_current ? WHITE : (Color){30,41,59,255});
+
+                    if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !is_current) {
+                        if (db_update_user_role(db, mgmt_user_ids[ui], roles[ri])) {
+                            snprintf(mgmt_user_roles[ui], 16, "%s", roles[ri]);
+                            toast_show(&toast, "Role mis a jour", false);
+                        } else {
+                            toast_show(&toast, "Erreur lors de la mise a jour", true);
+                        }
+                    }
+                }
+                by += 36;
+            }
+
+            if (GuiButton((Rectangle){ bx, box.y + box.height - 50, 130, 32 }, "Fermer")) panel = PANEL_NONE;
         }
 
         /* ---- Movement panel ---- */

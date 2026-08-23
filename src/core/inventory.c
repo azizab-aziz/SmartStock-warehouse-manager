@@ -256,6 +256,25 @@ bool inv_delete_product(int product_id, const Session *session, char *err_out, s
         return false;
     }
 
+        /* Products have audit history (movements) that must be preserved for
+       traceability even after the product itself is removed. Rather than
+       deleting movement rows (which would destroy the audit trail), null
+       out the reference so the FK is satisfied but the historical record
+       survives. Requires movements.product_id to allow NULL - see schema
+       note below if this still fails. */
+    sqlite3_prepare_v2(g_db->handle,
+        "UPDATE movements SET product_id = NULL WHERE product_id = ?;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, product_id);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+
+    /* Also clear any now-empty stock rows for this product (should already
+       be 0 quantity per the check above, but the FK still needs clearing). */
+    sqlite3_prepare_v2(g_db->handle, "DELETE FROM stock WHERE product_id=?;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, product_id);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+
     sqlite3_prepare_v2(g_db->handle, "DELETE FROM products WHERE id=?;", -1, &st, NULL);
     sqlite3_bind_int(st, 1, product_id);
     int rc = sqlite3_step(st);

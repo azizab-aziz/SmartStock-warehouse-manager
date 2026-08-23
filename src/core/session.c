@@ -70,6 +70,9 @@ bool session_can(const Session *s, const char *action) {
     if (strcmp(action, "product.edit") == 0)
         return true; /* all roles can edit product details */
 
+    if (strcmp(action, "user.manage") == 0)
+        return strcmp(s->role, "admin") == 0;
+
     /* Unknown action: fail closed. */
     return false;
 }

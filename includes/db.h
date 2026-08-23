@@ -57,4 +57,7 @@ bool db_find_or_create_category(WmsDb *db, const char *name, int *out_id);
 
 int db_count_products_in_category(WmsDb *db, int category_id);
 
+int  db_list_users(WmsDb *db, int *out_ids, char names[][64], char roles[][16], int max_count);
+bool db_update_user_role(WmsDb *db, int user_id, const char *new_role);
+
 #endif
