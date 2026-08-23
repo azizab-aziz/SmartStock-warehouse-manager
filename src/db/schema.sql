@@ -58,6 +58,7 @@ CREATE TABLE IF NOT EXISTS products (
     supplier_id     INTEGER REFERENCES suppliers(id),
     photo_path      TEXT,
     version         INTEGER NOT NULL DEFAULT 0,   -- optimistic-lock counter
+    active           INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

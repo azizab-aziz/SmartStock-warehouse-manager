@@ -449,7 +449,7 @@ void gui_run(WmsDb *db) {
         int visible_count = is_filtering ? filtered_count : total_products;
         int page_count = (visible_count + PAGE_SIZE - 1) / PAGE_SIZE;
         if (page >= page_count) page = page_count > 0 ? page_count - 1 : 0;
-
+        bool modal_active = (panel != PANEL_NONE);
         /* ---- draw ---- */
         BeginDrawing();
         ClearBackground((Color){ 245, 247, 250, 255 }); /* light neutral bg */
@@ -507,20 +507,20 @@ void gui_run(WmsDb *db) {
         int tx = sx;
         int btn_gap = 10;
 
-        if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "+ Nouveau produit")) {
+                if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "+ Nouveau produit") && !modal_active) {
             panel = PANEL_ADD_PRODUCT;
             f_sku[0] = f_name[0] = f_category[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
             f_category_id = 0; cat_dropdown_open = false; cat_adding_new = false; f_new_cat_input[0] = '\0';
         }
         tx += 160 + btn_gap;
 
-        if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")) {
+        if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")&& !modal_active) {
             if (selected_index >= 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
             else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
         tx += 140 + btn_gap;
 
-        if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")) {
+        if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")&& !modal_active) {
             if (selected_index >= 0) {
                 Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
                 edit_product_id = p->id;
@@ -536,7 +536,7 @@ void gui_run(WmsDb *db) {
         }
         tx += 100 + btn_gap;
 
-        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")) {
+        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")&& !modal_active) {
             if (selected_index >= 0) {
                 Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
                 edit_product_id = p->id;
@@ -545,13 +545,13 @@ void gui_run(WmsDb *db) {
         }
         tx += 110 + btn_gap;
 
-        if (GuiButton((Rectangle){ tx, toolbar_y, 150, sh }, "Gerer categories")) {
+        if (GuiButton((Rectangle){ tx, toolbar_y, 150, sh }, "Gerer categories")&& !modal_active) {
             panel = PANEL_MANAGE_CATEGORIES;
         }
 
         tx += 150 + btn_gap;
         if (session_can(&g_session, "user.manage")) {
-            if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "Gerer utilisateurs")) {
+            if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "Gerer utilisateurs")&& !modal_active) {
                 mgmt_user_count = db_list_users(db, mgmt_user_ids, mgmt_user_names, mgmt_user_roles, 64);
                 panel = PANEL_MANAGE_USERS;
             }
@@ -580,7 +580,7 @@ void gui_run(WmsDb *db) {
             if (selected) DrawRectangleRec(row_rect, (Color){ 210, 225, 245, 255 });
             else if (hovered) DrawRectangleRec(row_rect, (Color){ 235, 240, 248, 255 });
 
-            if (hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) selected_index = i;
+                        if (hovered && !modal_active && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) selected_index = i;
 
             AppText(p->sku, col_sku, row_y, 14, BLACK);
             AppText(p->name, col_name, row_y, 14, BLACK);
@@ -610,8 +610,8 @@ void gui_run(WmsDb *db) {
         char page_label[32];
         snprintf(page_label, sizeof page_label, "Page %d / %d", page + 1, page_count > 0 ? page_count : 1);
         DrawText(page_label, table_x, pag_y + 6, 14, DARKGRAY);
-        if (GuiButton((Rectangle){ table_x + 140, pag_y, 70, 30 }, "< Prec") && page > 0) page--;
-        if (GuiButton((Rectangle){ table_x + 220, pag_y, 70, 30 }, "Suiv >") && page + 1 < page_count) page++;
+        if (GuiButton((Rectangle){ table_x + 140, pag_y, 70, 30 }, "< Prec") && !modal_active && page > 0) page--;
+        if (GuiButton((Rectangle){ table_x + 220, pag_y, 70, 30 }, "Suiv >") && !modal_active && page + 1 < page_count) page++;
         /* ---- Add product panel (modal-ish) ---- */
                 if (panel == PANEL_ADD_PRODUCT) {
             Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 225, 440, 470 };
@@ -1076,8 +1076,8 @@ void gui_run(WmsDb *db) {
         }
 
         /* ---- global shortcuts ---- */
-        if (IsKeyPressed(KEY_F2)) { panel = PANEL_ADD_PRODUCT; f_sku[0]=f_name[0]=f_category[0]=f_price[0]=f_threshold[0]='\0'; }
-        if (IsKeyPressed(KEY_F3)) search_edit = true;
+        if (!modal_active && IsKeyPressed(KEY_F2)) { panel = PANEL_ADD_PRODUCT; f_sku[0]=f_name[0]=f_category[0]=f_price[0]=f_threshold[0]='\0'; }
+        if (!modal_active && IsKeyPressed(KEY_F3)) search_edit = true;
 
         EndDrawing();
     }

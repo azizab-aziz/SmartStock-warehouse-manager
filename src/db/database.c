@@ -72,6 +72,9 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
     sqlite3_exec(db->handle,
         "ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id);",
         NULL, NULL, NULL);
+    sqlite3_exec(db->handle,
+        "ALTER TABLE products ADD COLUMN active INTEGER NOT NULL DEFAULT 1;",
+        NULL, NULL, NULL);
 
     return true;
 }
@@ -254,7 +257,7 @@ bool db_find_or_create_category(WmsDb *db, const char *name, int *out_id) {
 int db_count_products_in_category(WmsDb *db, int category_id) {
     sqlite3_stmt *st;
     sqlite3_prepare_v2(db->handle,
-        "SELECT COUNT(*) FROM products WHERE category_id = ?1;", -1, &st, NULL);
+                "SELECT COUNT(*) FROM products WHERE category_id = ?1 AND active = 1;", -1, &st, NULL);
     sqlite3_bind_int(st, 1, category_id);
     int count = 0;
     if (sqlite3_step(st) == SQLITE_ROW) count = sqlite3_column_int(st, 0);

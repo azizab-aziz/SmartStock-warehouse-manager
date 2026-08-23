@@ -68,7 +68,7 @@ bool inv_init(WmsDb *db) {
     int rc = sqlite3_prepare_v2(g_db->handle,
         "SELECT id, prd_number, sku, barcode, name, category, unit, "
         "unit_price, alert_threshold, supplier_id, photo_path, version "
-        "FROM products ORDER BY id;", -1, &st, NULL);
+        "FROM products WHERE active = 1 ORDER BY id;", -1, &st, NULL);
     if (rc != SQLITE_OK) return false;
 
     while (sqlite3_step(st) == SQLITE_ROW && g_product_count < WMS_MAX_PRODUCTS) {
@@ -275,7 +275,11 @@ bool inv_delete_product(int product_id, const Session *session, char *err_out, s
     sqlite3_step(st);
     sqlite3_finalize(st);
 
-    sqlite3_prepare_v2(g_db->handle, "DELETE FROM products WHERE id=?;", -1, &st, NULL);
+        /* Soft delete: products carry audit history via movements.product_id
+       (NOT NULL FK), so a hard DELETE always violates that constraint.
+       Marking inactive preserves the audit trail and sidesteps the FK
+       issue entirely - same pattern as users.active. */
+    sqlite3_prepare_v2(g_db->handle, "UPDATE products SET active = 0 WHERE id=?;", -1, &st, NULL);
     sqlite3_bind_int(st, 1, product_id);
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
