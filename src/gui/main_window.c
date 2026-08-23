@@ -487,18 +487,34 @@ void gui_run(WmsDb *db) {
             continue;
         }
 
-        /* Search bar */
-        int sx = 20, sy = 84, sw = 400, sh = 32;
+        /* Search bar - own row */
+        int sx = 20, sy = 94, sw = 400, sh = 32;
         if (GuiTextBox((Rectangle){ sx, sy, sw, sh }, search_query, sizeof search_query, search_edit))
             search_edit = !search_edit;
         DrawText("F3: recherche", sx, sy + sh + 4, 12, GRAY);
 
-        if (GuiButton((Rectangle){ sx + sw + 10, sy, 160, sh }, "+ Nouveau produit")) {
+        /* Action buttons - own row below the search bar, so they never run
+           off the right edge at narrower window sizes. Wraps naturally
+           since each button's x is computed from the previous one's width
+           rather than a hardcoded offset from the search bar. */
+        int toolbar_y = sy + sh + 22;
+        int tx = sx;
+        int btn_gap = 10;
+
+        if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "+ Nouveau produit")) {
             panel = PANEL_ADD_PRODUCT;
             f_sku[0] = f_name[0] = f_category[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
             f_category_id = 0; cat_dropdown_open = false; cat_adding_new = false; f_new_cat_input[0] = '\0';
         }
-                if (GuiButton((Rectangle){ sx + sw + 330, sy, 100, sh }, "Modifier")) {
+        tx += 160 + btn_gap;
+
+        if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")) {
+            if (selected_index >= 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
+            else toast_show(&toast, "Selectionnez un produit d'abord", true);
+        }
+        tx += 140 + btn_gap;
+
+        if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")) {
             if (selected_index >= 0) {
                 Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
                 edit_product_id = p->id;
@@ -512,21 +528,25 @@ void gui_run(WmsDb *db) {
                 ee_name = true; ee_price = ee_threshold = false;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-        if (GuiButton((Rectangle){ sx + sw + 440, sy, 110, sh }, "Supprimer")) {
+        tx += 100 + btn_gap;
+
+        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")) {
             if (selected_index >= 0) {
                 Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
                 edit_product_id = p->id;
                 panel = PANEL_CONFIRM_DELETE_PRODUCT;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-        if (GuiButton((Rectangle){ sx + sw + 560, sy, 150, sh }, "Gerer categories")) {
+        tx += 110 + btn_gap;
+
+        if (GuiButton((Rectangle){ tx, toolbar_y, 150, sh }, "Gerer categories")) {
             panel = PANEL_MANAGE_CATEGORIES;
         }
 
         /* Table header */
-        int tx = 20, ty = 140;
-        int col_sku = tx, col_name = tx + 110, col_cat = tx + 380,
-            col_qty = tx + 540, col_price = tx + 640, col_alert = tx + 760;
+        int table_x = 20, ty = toolbar_y + sh + 24;
+        int col_sku = table_x, col_name = table_x + 110, col_cat = table_x + 380,
+           col_qty = table_x + 540, col_price = table_x + 640, col_alert = table_x + 760;
         AppText("SKU", col_sku, ty, 14, DARKGRAY);
         AppText("Nom", col_name, ty, 14, DARKGRAY);
         AppText("Categorie", col_cat, ty, 14, DARKGRAY);
@@ -539,7 +559,7 @@ void gui_run(WmsDb *db) {
 
         for (int i = start; i < visible_count && shown_this_page < PAGE_SIZE; i++, shown_this_page++) {
             Product *p = is_filtering ? filtered[i] : &all_products[i];
-            Rectangle row_rect = { tx - 4, row_y - 4, GetScreenWidth() - 2 * tx + 8, 26 };
+            Rectangle row_rect = { table_x - 4, row_y - 4, GetScreenWidth() - 2 * table_x + 8, 26 };
             bool hovered = CheckCollisionPointRec(GetMousePosition(), row_rect);
             bool selected = (selected_index == i);
 
@@ -575,10 +595,9 @@ void gui_run(WmsDb *db) {
         int pag_y = GetScreenHeight() - 60;
         char page_label[32];
         snprintf(page_label, sizeof page_label, "Page %d / %d", page + 1, page_count > 0 ? page_count : 1);
-        DrawText(page_label, tx, pag_y + 6, 14, DARKGRAY);
-        if (GuiButton((Rectangle){ tx + 140, pag_y, 70, 30 }, "< Prec") && page > 0) page--;
-        if (GuiButton((Rectangle){ tx + 220, pag_y, 70, 30 }, "Suiv >") && page + 1 < page_count) page++;
-
+        DrawText(page_label, table_x, pag_y + 6, 14, DARKGRAY);
+        if (GuiButton((Rectangle){ table_x + 140, pag_y, 70, 30 }, "< Prec") && page > 0) page--;
+        if (GuiButton((Rectangle){ table_x + 220, pag_y, 70, 30 }, "Suiv >") && page + 1 < page_count) page++;
         /* ---- Add product panel (modal-ish) ---- */
                 if (panel == PANEL_ADD_PRODUCT) {
             Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 225, 440, 470 };
@@ -891,8 +910,8 @@ void gui_run(WmsDb *db) {
         }
 
         /* ---- Manage categories panel ---- */
-        if (panel == PANEL_MANAGE_CATEGORIES) {
-            float list_h = 30.0f * total_categories + 60;
+                if (panel == PANEL_MANAGE_CATEGORIES) {
+            float list_h = 30.0f * (total_categories > 0 ? total_categories : 1) + 100;
             Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - list_h/2, 440, list_h };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, "Gerer les categories");
@@ -900,6 +919,7 @@ void gui_run(WmsDb *db) {
             float bx = box.x + 20, by = box.y + 40;
             if (total_categories == 0) {
                 AppText("Aucune categorie pour le moment.", bx, by, 14, COLOR_TEXT_MUTED);
+                by += 30;
             }
             for (int ci = 0; ci < total_categories; ci++) {
                 AppText(all_categories[ci].name, bx, by + 4, 14, (Color){30,41,59,255});
@@ -911,7 +931,9 @@ void gui_run(WmsDb *db) {
                 by += 30;
             }
 
-            if (GuiButton((Rectangle){ bx, by + 10, 130, 32 }, "Fermer")) panel = PANEL_NONE;
+            /* "Fermer" pinned to the bottom-left of the panel, with a
+               consistent gap - not drifting based on list length. */
+            if (GuiButton((Rectangle){ bx, box.y + box.height - 50, 130, 32 }, "Fermer")) panel = PANEL_NONE;
         }
 
         /* ---- Confirm delete category ---- */

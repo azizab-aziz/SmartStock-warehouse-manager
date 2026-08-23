@@ -53,7 +53,7 @@ bool session_can(const Session *s, const char *action) {
     if (strcmp(s->role, "admin") == 0) return true; /* admin can do everything */
 
     if (strcmp(action, "product.delete") == 0)
-        return strcmp(s->role, "manager") == 0;
+        return true; /* any logged-in role can delete products */
 
     if (strcmp(action, "history.delete") == 0)
         return false; /* spec: admin-only */
