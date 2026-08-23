@@ -56,15 +56,23 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
     sql[read_n] = '\0';
     fclose(f);
 
-    char *err = NULL;
+        char *err = NULL;
     int rc = sqlite3_exec(db->handle, sql, NULL, NULL, &err);
     free(sql);
-
     if (rc != SQLITE_OK) {
         fprintf(stderr, "db_apply_schema: %s\n", err ? err : "unknown error");
         sqlite3_free(err);
         return false;
     }
+
+    /* Migration: existing installs already have a `products` table without
+       category_id. SQLite has no "ADD COLUMN IF NOT EXISTS" -- we just try
+       it and ignore the "duplicate column name" error if it's already there
+       (same pattern as the users/locations schema-drift issue). */
+    sqlite3_exec(db->handle,
+        "ALTER TABLE products ADD COLUMN category_id INTEGER REFERENCES categories(id);",
+        NULL, NULL, NULL);
+
     return true;
 }
 
@@ -198,4 +206,47 @@ bool db_count_users(WmsDb *db, int *out_count) {
     }
     sqlite3_finalize(stmt);
     return ok;
+}
+
+int db_list_categories(WmsDb *db, Category *out, int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT id, name FROM categories ORDER BY name COLLATE NOCASE;", -1, &st, NULL);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        out[n].id = sqlite3_column_int(st, 0);
+        snprintf(out[n].name, sizeof(out[n].name), "%s", (const char*)sqlite3_column_text(st, 1));
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+bool db_find_or_create_category(WmsDb *db, const char *name, int *out_id) {
+    char trimmed[64];
+    const char *start = name;
+    while (*start == ' ') start++;
+    snprintf(trimmed, sizeof(trimmed), "%s", start);
+    int len = (int)strlen(trimmed);
+    while (len > 0 && trimmed[len - 1] == ' ') trimmed[--len] = '\0';
+    if (trimmed[0] == '\0') return false;
+
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT id FROM categories WHERE name = ?1 COLLATE NOCASE;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, trimmed, -1, SQLITE_TRANSIENT);
+    if (sqlite3_step(st) == SQLITE_ROW) {
+        *out_id = sqlite3_column_int(st, 0);
+        sqlite3_finalize(st);
+        return true;
+    }
+    sqlite3_finalize(st);
+
+    sqlite3_prepare_v2(db->handle, "INSERT INTO categories (name) VALUES (?1);", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, trimmed, -1, SQLITE_TRANSIENT);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    if (!ok) return false;
+    *out_id = (int)sqlite3_last_insert_rowid(db->handle);
+    return true;
 }

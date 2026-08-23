@@ -47,4 +47,12 @@ bool db_log_login(WmsDb *db, int user_id, int *out_login_log_id);
 bool db_log_logout(WmsDb *db, int login_log_id);
 bool db_count_users(WmsDb *db, int *out_count);
 
+typedef struct {
+    int  id;
+    char name[64];
+} Category;
+
+int  db_list_categories(WmsDb *db, Category *out, int max_count);
+bool db_find_or_create_category(WmsDb *db, const char *name, int *out_id);
+
 #endif

@@ -5,6 +5,11 @@ PRAGMA journal_mode = WAL;      -- readers never block writers
 PRAGMA foreign_keys = ON;
 PRAGMA busy_timeout = 3000;     -- ms to wait on a lock before SQLITE_BUSY
 
+CREATE TABLE IF NOT EXISTS categories (
+    id   INTEGER PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL COLLATE NOCASE   -- COLLATE NOCASE = case-insensitive uniqueness
+);
+
 CREATE TABLE IF NOT EXISTS users (
     id            INTEGER PRIMARY KEY,
     username      TEXT UNIQUE NOT NULL,

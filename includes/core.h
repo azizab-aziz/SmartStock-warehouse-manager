@@ -15,6 +15,7 @@ typedef struct {
     char   barcode[64];
     char   name[128];
     char   category[64];
+    int    category_id;   /* 0 = uncategorized; FK into categories table */
     char   unit[16];
     double unit_price;
     int    alert_threshold;
@@ -76,5 +77,8 @@ int inv_search(const char *query, Product **out, int max_results);
 
 /* Snapshot access for the GUI's product table / pagination. */
 int inv_all_products(Product **out_array); /* returns count, *out_array points at internal buffer, do not free */
+
+int  inv_get_categories(Category **out);
+void inv_refresh_categories(WmsDb *db);
 
 #endif

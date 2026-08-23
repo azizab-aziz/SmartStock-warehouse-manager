@@ -10,6 +10,9 @@
 static WmsDb     *g_db = NULL;
 static Product    g_products[WMS_MAX_PRODUCTS];
 static int         g_product_count = 0;
+#define WMS_MAX_CATEGORIES 256
+static Category g_categories[WMS_MAX_CATEGORIES];
+static int       g_category_count = 0;
 static HashTable   g_by_sku;
 static HashTable   g_by_barcode;
 
@@ -90,10 +93,21 @@ bool inv_init(WmsDb *db) {
     }
     sqlite3_finalize(st);
 
-    for (int i = 0; i < g_product_count; i++)
+        for (int i = 0; i < g_product_count; i++)
         refresh_product_total(g_products[i].id);
 
+    g_category_count = db_list_categories(g_db, g_categories, WMS_MAX_CATEGORIES);
+
     return true;
+}
+
+int inv_get_categories(Category **out) {
+    *out = g_categories;
+    return g_category_count;
+}
+
+void inv_refresh_categories(WmsDb *db) {
+    g_category_count = db_list_categories(db, g_categories, WMS_MAX_CATEGORIES);
 }
 
 void inv_shutdown(void) {
@@ -116,21 +130,23 @@ bool inv_add_product(const Product *in, char *err_out, size_t err_len) {
     snprintf(prd, sizeof prd, "PRD-%03d", g_product_count + 1);
 
     sqlite3_stmt *st;
-    sqlite3_prepare_v2(g_db->handle,
-        "INSERT INTO products (prd_number, sku, barcode, name, category, "
+        sqlite3_prepare_v2(g_db->handle,
+        "INSERT INTO products (prd_number, sku, barcode, name, category, category_id, "
         "unit, unit_price, alert_threshold, supplier_id, photo_path) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?);", -1, &st, NULL);
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?);", -1, &st, NULL);
     sqlite3_bind_text(st, 1, prd, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st, 2, in->sku, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st, 3, in->barcode, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st, 4, in->name, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st, 5, in->category, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(st, 6, in->unit[0] ? in->unit : "pcs", -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(st, 7, in->unit_price);
-    sqlite3_bind_int(st, 8, in->alert_threshold);
-    if (in->supplier_id > 0) sqlite3_bind_int(st, 9, in->supplier_id);
-    else sqlite3_bind_null(st, 9);
-    sqlite3_bind_text(st, 10, in->photo_path, -1, SQLITE_TRANSIENT);
+    if (in->category_id > 0) sqlite3_bind_int(st, 6, in->category_id);
+    else sqlite3_bind_null(st, 6);
+    sqlite3_bind_text(st, 7, in->unit[0] ? in->unit : "pcs", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(st, 8, in->unit_price);
+    sqlite3_bind_int(st, 9, in->alert_threshold);
+    if (in->supplier_id > 0) sqlite3_bind_int(st, 10, in->supplier_id);
+    else sqlite3_bind_null(st, 10);
+    sqlite3_bind_text(st, 11, in->photo_path, -1, SQLITE_TRANSIENT);
 
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
