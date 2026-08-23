@@ -548,12 +548,19 @@ void gui_run(WmsDb *db) {
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, "Nouveau produit");
 
-            bool *edit_flags[5] = { &edit_sku, &edit_name,
+                       bool *edit_flags[5] = { &edit_sku, &edit_name,
                                      &edit_price, &edit_threshold, &edit_initial_qty };
-            bool any_focused = edit_sku || edit_name ||
-                                edit_price || edit_threshold || edit_initial_qty;
+            bool any_focused = edit_sku || edit_name || edit_price ||
+                                edit_threshold || edit_initial_qty ||
+                                cat_dropdown_open || edit_new_cat;
             if (!any_focused) edit_sku = true;
-            NavResult addproduct_nav = nav_handle_focus(edit_flags, 5);
+
+            /* While the category dropdown/add-category box is active, the
+               5-field Tab/↑↓ navigation must not run at all - otherwise it
+               fights with the dropdown for focus every frame. */
+            NavResult addproduct_nav = cat_dropdown_open
+                ? (NavResult){ false, false }
+                : nav_handle_focus(edit_flags, 5);
 
             float bx = box.x + 20, by = box.y + 40;
 
