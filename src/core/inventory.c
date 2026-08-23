@@ -281,6 +281,29 @@ bool inv_delete_product(int product_id, const Session *session, char *err_out, s
     return true;
 }
 
+bool inv_delete_category(int category_id, const Session *session,
+                          char *err_out, size_t err_len) {
+    if (!session_can(session, "category.delete")) {
+        set_err(err_out, err_len, "Permission refusee pour ce role");
+        return false;
+    }
+
+    int in_use = db_count_products_in_category(g_db, category_id);
+    if (in_use > 0) {
+        snprintf(err_out, err_len,
+                 "Impossible: %d produit(s) utilisent encore cette categorie", in_use);
+        return false;
+    }
+
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(g_db->handle, "DELETE FROM categories WHERE id = ?1;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, category_id);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    if (!ok) set_err(err_out, err_len, sqlite3_errmsg(g_db->handle));
+    return ok;
+}
+
 /*
  * THE atomic stock write. Everything about race-condition safety lives
  * here:

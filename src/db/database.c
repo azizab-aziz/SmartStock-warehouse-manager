@@ -250,3 +250,14 @@ bool db_find_or_create_category(WmsDb *db, const char *name, int *out_id) {
     *out_id = (int)sqlite3_last_insert_rowid(db->handle);
     return true;
 }
+
+int db_count_products_in_category(WmsDb *db, int category_id) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT COUNT(*) FROM products WHERE category_id = ?1;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, category_id);
+    int count = 0;
+    if (sqlite3_step(st) == SQLITE_ROW) count = sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    return count;
+}

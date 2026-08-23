@@ -271,7 +271,9 @@ static void draw_login_screen(WmsDb *db) {
     }
 }
 
-typedef enum { PANEL_NONE, PANEL_ADD_PRODUCT, PANEL_MOVEMENT } ActivePanel;
+typedef enum { PANEL_NONE, PANEL_ADD_PRODUCT, PANEL_MOVEMENT,
+               PANEL_EDIT_PRODUCT, PANEL_CONFIRM_DELETE_PRODUCT,
+               PANEL_MANAGE_CATEGORIES, PANEL_CONFIRM_DELETE_CATEGORY } ActivePanel;
 
 /* Small helper: a message that fades out after ~1.5s, per the spec
  * ("Messages de succes avec fade-out apres chaque action"). */
@@ -382,6 +384,21 @@ void gui_run(WmsDb *db) {
     bool edit_qty = false;
     int  movement_sign = 1; /* +1 in, -1 out */
 
+    /* Edit-product form - reuses the same field pattern as add-product,
+       plus the id/version of the product being edited (needed for
+       inv_update_product's optimistic-lock check). */
+    int  edit_product_id = 0, edit_product_version = 0;
+    char e_name[128] = {0}, e_price[32] = {0}, e_threshold[16] = {0};
+    bool ee_name = false, ee_price = false, ee_threshold = false;
+    int  e_category_id = 0;
+    char e_category[64] = {0};
+    bool e_cat_dropdown_open = false;
+    Rectangle e_cat_field_rect = {0};
+
+    /* Category management panel */
+    int delete_category_id = 0;
+    char delete_category_name[64] = {0};
+
     while (!WindowShouldClose()) {
 
         /* ---- session bookkeeping (runs every frame, before anything else) ---- */
@@ -481,9 +498,29 @@ void gui_run(WmsDb *db) {
             f_sku[0] = f_name[0] = f_category[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
             f_category_id = 0; cat_dropdown_open = false; cat_adding_new = false; f_new_cat_input[0] = '\0';
         }
-        if (GuiButton((Rectangle){ sx + sw + 180, sy, 140, sh }, "Mouvement stock")) {
-            if (selected_index >= 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
-            else toast_show(&toast, "Selectionnez un produit d'abord", true);
+                if (GuiButton((Rectangle){ sx + sw + 330, sy, 100, sh }, "Modifier")) {
+            if (selected_index >= 0) {
+                Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
+                edit_product_id = p->id;
+                edit_product_version = p->version;
+                snprintf(e_name, sizeof e_name, "%s", p->name);
+                snprintf(e_price, sizeof e_price, "%.2f", p->unit_price);
+                snprintf(e_threshold, sizeof e_threshold, "%d", p->alert_threshold);
+                e_category_id = p->category_id;
+                snprintf(e_category, sizeof e_category, "%s", p->category);
+                panel = PANEL_EDIT_PRODUCT;
+                ee_name = true; ee_price = ee_threshold = false;
+            } else toast_show(&toast, "Selectionnez un produit d'abord", true);
+        }
+        if (GuiButton((Rectangle){ sx + sw + 440, sy, 110, sh }, "Supprimer")) {
+            if (selected_index >= 0) {
+                Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
+                edit_product_id = p->id;
+                panel = PANEL_CONFIRM_DELETE_PRODUCT;
+            } else toast_show(&toast, "Selectionnez un produit d'abord", true);
+        }
+        if (GuiButton((Rectangle){ sx + sw + 560, sy, 150, sh }, "Gerer categories")) {
+            panel = PANEL_MANAGE_CATEGORIES;
         }
 
         /* Table header */
@@ -730,6 +767,175 @@ void gui_run(WmsDb *db) {
                     }
                 }
             }
+        }
+
+                /* ---- Edit product panel ---- */
+        if (panel == PANEL_EDIT_PRODUCT) {
+            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 210, 440, 420 };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            GuiPanel(box, "Modifier le produit");
+
+            bool *e_flags[3] = { &ee_name, &ee_price, &ee_threshold };
+            bool e_any = ee_name || ee_price || ee_threshold || e_cat_dropdown_open;
+            if (!e_any) ee_name = true;
+            NavResult edit_nav = e_cat_dropdown_open
+                ? (NavResult){ false, false }
+                : nav_handle_focus(e_flags, 3);
+
+            float bx = box.x + 20, by = box.y + 40;
+
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Nom");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, e_name, sizeof e_name, ee_name) && !edit_nav.moved) {
+                ee_name = !ee_name;
+                if (ee_name) { ee_price = ee_threshold = false; }
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Categorie");
+            e_cat_field_rect = (Rectangle){ bx + 110, by, 280, 24 };
+            bool e_cat_hover = CheckCollisionPointRec(GetMousePosition(), e_cat_field_rect);
+            DrawRectangleRec(e_cat_field_rect, WHITE);
+            DrawRectangleLinesEx(e_cat_field_rect, 1, e_cat_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+            const char *e_cat_display = e_category[0] ? e_category : "Choisir une categorie";
+            AppText(e_cat_display, e_cat_field_rect.x + 8, e_cat_field_rect.y + 5, 14,
+                     e_category[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
+            AppText(e_cat_dropdown_open ? "^" : "v",
+                     e_cat_field_rect.x + e_cat_field_rect.width - 18, e_cat_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
+            if (e_cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                e_cat_dropdown_open = !e_cat_dropdown_open;
+                ee_name = ee_price = ee_threshold = false;
+            }
+
+            by += 44;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Prix unitaire");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, e_price, sizeof e_price, ee_price) && !edit_nav.moved) {
+                ee_price = !ee_price;
+                if (ee_price) { ee_name = ee_threshold = false; }
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Seuil alerte");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, e_threshold, sizeof e_threshold, ee_threshold) && !edit_nav.moved) {
+                ee_threshold = !ee_threshold;
+                if (ee_threshold) { ee_name = ee_price = false; }
+            }
+
+            by += 50;
+            if (!e_cat_dropdown_open) {
+                if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || edit_nav.submit) {
+                    Product upd = {0};
+                    upd.id = edit_product_id;
+                    upd.version = edit_product_version;
+                    snprintf(upd.name, sizeof upd.name, "%s", e_name);
+                    snprintf(upd.category, sizeof upd.category, "%s", e_category);
+                    upd.category_id = e_category_id;
+                    upd.unit_price = (float)atof(e_price);
+                    upd.alert_threshold = atoi(e_threshold);
+
+                    char err[256];
+                    if (inv_update_product(&upd, err, sizeof err)) {
+                        total_products = inv_all_products(&all_products);
+                        toast_show(&toast, "Produit modifie", false);
+                        panel = PANEL_NONE;
+                    } else {
+                        toast_show(&toast, err, true); /* e.g. version conflict message */
+                    }
+                }
+                if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Annuler")) panel = PANEL_NONE;
+            }
+
+            if (e_cat_dropdown_open) {
+                float row_h = 26;
+                Rectangle dd = { e_cat_field_rect.x, e_cat_field_rect.y + e_cat_field_rect.height + 2,
+                                  e_cat_field_rect.width, row_h * (float)total_categories };
+                DrawRectangleRec(dd, WHITE);
+                DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+                for (int ci = 0; ci < total_categories; ci++) {
+                    Rectangle row = { dd.x, dd.y + ci * row_h, dd.width, row_h };
+                    bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                    bool selected = (e_category_id == all_categories[ci].id);
+                    if (hover || selected) DrawRectangleRec(row, (Color){239,246,255,255});
+                    AppText(all_categories[ci].name, row.x + 8, row.y + 5, 14, (Color){30,41,59,255});
+                    if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        snprintf(e_category, sizeof e_category, "%s", all_categories[ci].name);
+                        e_category_id = all_categories[ci].id;
+                        e_cat_dropdown_open = false;
+                    }
+                }
+            }
+        }
+
+        /* ---- Confirm delete product ---- */
+        if (panel == PANEL_CONFIRM_DELETE_PRODUCT) {
+            Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 90, 400, 180 };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            GuiPanel(box, "Confirmer la suppression");
+
+            float bx = box.x + 20, by = box.y + 40;
+            AppText("Voulez-vous vraiment supprimer ce produit ?", bx, by, 14, (Color){30,41,59,255});
+            AppText("Cette action est irreversible.", bx, by + 22, 13, COLOR_TEXT_MUTED);
+
+            by += 60;
+            if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, supprimer")) {
+                char err[256];
+                if (inv_delete_product(edit_product_id, &g_session, err, sizeof err)) {
+                    total_products = inv_all_products(&all_products);
+                    selected_index = -1;
+                    toast_show(&toast, "Produit supprime", false);
+                } else {
+                    toast_show(&toast, err, true); /* e.g. "stock restant non nul" */
+                }
+                panel = PANEL_NONE;
+            }
+            if (GuiButton((Rectangle){ bx + 180, by, 160, 34 }, "Annuler")) panel = PANEL_NONE;
+        }
+
+        /* ---- Manage categories panel ---- */
+        if (panel == PANEL_MANAGE_CATEGORIES) {
+            float list_h = 30.0f * total_categories + 60;
+            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - list_h/2, 440, list_h };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            GuiPanel(box, "Gerer les categories");
+
+            float bx = box.x + 20, by = box.y + 40;
+            if (total_categories == 0) {
+                AppText("Aucune categorie pour le moment.", bx, by, 14, COLOR_TEXT_MUTED);
+            }
+            for (int ci = 0; ci < total_categories; ci++) {
+                AppText(all_categories[ci].name, bx, by + 4, 14, (Color){30,41,59,255});
+                if (GuiButton((Rectangle){ box.x + box.width - 90, by, 70, 26 }, "Suppr.")) {
+                    delete_category_id = all_categories[ci].id;
+                    snprintf(delete_category_name, sizeof delete_category_name, "%s", all_categories[ci].name);
+                    panel = PANEL_CONFIRM_DELETE_CATEGORY;
+                }
+                by += 30;
+            }
+
+            if (GuiButton((Rectangle){ bx, by + 10, 130, 32 }, "Fermer")) panel = PANEL_NONE;
+        }
+
+        /* ---- Confirm delete category ---- */
+        if (panel == PANEL_CONFIRM_DELETE_CATEGORY) {
+            Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 90, 400, 180 };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            GuiPanel(box, "Confirmer la suppression");
+
+            float bx = box.x + 20, by = box.y + 40;
+            AppText(TextFormat("Supprimer la categorie \"%s\" ?", delete_category_name), bx, by, 14, (Color){30,41,59,255});
+
+            by += 40;
+            if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, supprimer")) {
+                char err[256];
+                if (inv_delete_category(delete_category_id, &g_session, err, sizeof err)) {
+                    total_categories = inv_get_categories(&all_categories);
+                    toast_show(&toast, "Categorie supprimee", false);
+                    panel = PANEL_MANAGE_CATEGORIES;
+                } else {
+                    toast_show(&toast, err, true); /* cascade-safety message */
+                    panel = PANEL_MANAGE_CATEGORIES;
+                }
+            }
+            if (GuiButton((Rectangle){ bx + 180, by, 160, 34 }, "Annuler")) panel = PANEL_MANAGE_CATEGORIES;
         }
 
         /* ---- Movement panel ---- */

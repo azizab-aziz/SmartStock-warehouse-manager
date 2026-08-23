@@ -55,4 +55,6 @@ typedef struct {
 int  db_list_categories(WmsDb *db, Category *out, int max_count);
 bool db_find_or_create_category(WmsDb *db, const char *name, int *out_id);
 
+int db_count_products_in_category(WmsDb *db, int category_id);
+
 #endif

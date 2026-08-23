@@ -81,4 +81,9 @@ int inv_all_products(Product **out_array); /* returns count, *out_array points a
 int  inv_get_categories(Category **out);
 void inv_refresh_categories(WmsDb *db);
 
+/* Deletes a category only if no product currently references it (cascade
+ * safety). On refusal, err_out lists how many products are still linked. */
+bool inv_delete_category(int category_id, const Session *session,
+                          char *err_out, size_t err_len);
+
 #endif

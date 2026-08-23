@@ -64,6 +64,12 @@ bool session_can(const Session *s, const char *action) {
     if (strcmp(action, "po.approve") == 0)
         return strcmp(s->role, "manager") == 0;
 
+    if (strcmp(action, "category.delete") == 0)
+        return strcmp(s->role, "manager") == 0;
+
+    if (strcmp(action, "product.edit") == 0)
+        return true; /* all roles can edit product details */
+
     /* Unknown action: fail closed. */
     return false;
 }
