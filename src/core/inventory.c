@@ -316,12 +316,25 @@ bool inv_delete_category(int category_id, const Session *session,
         return false;
     }
 
+    /* Business rule: only ACTIVE products block deletion. */
     int in_use = db_count_products_in_category(g_db, category_id);
     if (in_use > 0) {
         snprintf(err_out, err_len,
                  "Impossible: %d produit(s) utilisent encore cette categorie", in_use);
         return false;
     }
+
+    /* Cleanup: clear category_id on EVERY product still pointing at this
+       category, including already-inactive ones from before this cleanup
+       step existed. Without this, old soft-deleted rows silently violate
+       the FK the moment we try to delete the category, even though the
+       business-rule check above already said it was safe. */
+    sqlite3_stmt *clr;
+    sqlite3_prepare_v2(g_db->handle,
+        "UPDATE products SET category_id = NULL WHERE category_id = ?1;", -1, &clr, NULL);
+    sqlite3_bind_int(clr, 1, category_id);
+    sqlite3_step(clr);
+    sqlite3_finalize(clr);
 
     sqlite3_stmt *st;
     sqlite3_prepare_v2(g_db->handle, "DELETE FROM categories WHERE id = ?1;", -1, &st, NULL);
