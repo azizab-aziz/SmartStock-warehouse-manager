@@ -732,9 +732,17 @@ void gui_run(WmsDb *db) {
         AppText("Deconnexion", logout_rect.x + logout_rect.width/2 - logout_tsize.x/2,
                  logout_rect.y + 8, 14, WHITE);
 
-                char subtitle[64];
-        snprintf(subtitle, sizeof subtitle, "%d produits", total_products);
+                int cat_count_now = 0;
+        if (g_active_category_id > 0) {
+            for (int pi = 0; pi < total_products; pi++)
+                if (all_products[pi].category_id == g_active_category_id) cat_count_now++;
+        }
+        char subtitle[64];
+        int shown_count = (g_active_category_id > 0) ? cat_count_now : total_products;
+        snprintf(subtitle, sizeof subtitle, "%d produits", shown_count);
         AppText(subtitle, 20, 8 + header_logo_h + 4, 14, (Color){180,190,210,255});
+
+
 
         if (logout_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             session_logout(db, &g_session);
@@ -758,10 +766,21 @@ void gui_run(WmsDb *db) {
         int tx = sx;
         int btn_gap = 10;
 
-                if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "+ Nouveau produit") && !modal_active) {
+            if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "+ Nouveau produit")) {
             panel = PANEL_ADD_PRODUCT;
-            f_sku[0] = f_name[0] = f_category[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
-            f_category_id = 0; cat_dropdown_open = false; cat_adding_new = false; f_new_cat_input[0] = '\0';
+            f_sku[0] = f_name[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
+            cat_dropdown_open = false; cat_adding_new = false; f_new_cat_input[0] = '\0';
+
+            /* Pre-fill with whichever category we're currently browsing,
+               since a product added from inside "materiel bureautique"
+               should land in that category by default. */
+            if (g_active_category_id > 0) {
+                f_category_id = g_active_category_id;
+                snprintf(f_category, sizeof f_category, "%s", g_active_category_name);
+            } else {
+                f_category_id = 0;
+                f_category[0] = '\0';
+            }
         }
         tx += 160 + btn_gap;
 
@@ -1329,7 +1348,17 @@ void gui_run(WmsDb *db) {
         }
 
         /* ---- global shortcuts ---- */
-        if (!modal_active && IsKeyPressed(KEY_F2)) { panel = PANEL_ADD_PRODUCT; f_sku[0]=f_name[0]=f_category[0]=f_price[0]=f_threshold[0]='\0'; }
+if (IsKeyPressed(KEY_F2)) {
+    panel = PANEL_ADD_PRODUCT;
+    f_sku[0] = f_name[0] = f_price[0] = f_threshold[0] = '\0';
+    if (g_active_category_id > 0) {
+        f_category_id = g_active_category_id;
+        snprintf(f_category, sizeof f_category, "%s", g_active_category_name);
+    } else {
+        f_category_id = 0;
+        f_category[0] = '\0';
+    }
+}
         if (!modal_active && IsKeyPressed(KEY_F3)) search_edit = true;
 
         EndDrawing();
