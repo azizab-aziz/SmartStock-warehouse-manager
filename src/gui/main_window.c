@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <math.h>
 
+
+#define _GNU_SOURCE
 #define PAGE_SIZE 10
 #define SCREEN_W  1024
 #define SCREEN_H  768
@@ -23,8 +25,10 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_MAIN } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
+static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
+static char    g_active_category_name[64] = "";
 static float   g_splashTimer = 0.0f;
 static Session g_session = {0};
 static Font g_appFont;
@@ -169,9 +173,9 @@ static void draw_login_screen(WmsDb *db) {
 
         if (submit) {
             char err[128];
-            if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
+                       if (session_login(db, login_username, login_password, &g_session, err, sizeof(err))) {
                 memset(login_password, 0, sizeof(login_password));
-                g_screen = SCREEN_MAIN;
+                g_screen = SCREEN_CATEGORIES;
             } else {
                 snprintf(login_error, sizeof(login_error), "%s", err);
                 error_fade = 1.0f;
@@ -249,7 +253,7 @@ static void draw_login_screen(WmsDb *db) {
                     memset(signup_password, 0, sizeof(signup_password));
                     memset(signup_confirm, 0, sizeof(signup_confirm));
                     signup_mode = false;
-                    g_screen = SCREEN_MAIN;
+                    g_screen = SCREEN_CATEGORIES;
                 } else {
                     snprintf(login_error, sizeof(login_error), "%s", err);
                     error_fade = 1.0f;
@@ -271,6 +275,7 @@ static void draw_login_screen(WmsDb *db) {
     }
 }
 
+
 typedef enum { PANEL_NONE, PANEL_ADD_PRODUCT, PANEL_MOVEMENT,
                PANEL_EDIT_PRODUCT, PANEL_CONFIRM_DELETE_PRODUCT,
                PANEL_MANAGE_CATEGORIES, PANEL_CONFIRM_DELETE_CATEGORY,
@@ -290,7 +295,209 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
     t->is_error = is_error;
 }
 
+/* Portable case-insensitive substring search (strcasestr is a glibc/BSD
+ * extension not reliably available on MinGW). Returns true if `needle`
+ * appears anywhere in `haystack`, ignoring case. */
+static bool ci_str_contains(const char *haystack, const char *needle) {
+    if (!needle[0]) return true;
+    size_t hlen = strlen(haystack), nlen = strlen(needle);
+    if (nlen > hlen) return false;
+    for (size_t i = 0; i <= hlen - nlen; i++) {
+        size_t j = 0;
+        while (j < nlen) {
+            char a = haystack[i+j], b = needle[j];
+            if (a >= 'A' && a <= 'Z') a += 32;
+            if (b >= 'A' && b <= 'Z') b += 32;
+            if (a != b) break;
+            j++;
+        }
+        if (j == nlen) return true;
+    }
+    return false;
+}
 
+static void draw_categories_screen(WmsDb *db, Category *all_categories, int *total_categories,
+                                    char *cat_search, bool *cat_search_edit,
+                                    int *cat_action_id, char *cat_rename_input, bool *cat_rename_edit,
+                                    bool *cat_renaming, ActivePanel *cat_screen_panel, Toast *toast) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Catalogue par categorie", 20, 46, 14, (Color){180,190,210,255});
+
+    char user_label[96];
+    snprintf(user_label, sizeof user_label, "%s (%s)", g_session.username, g_session.role);
+    Vector2 user_size = MeasureTextEx(g_appFont, user_label, 14, 1);
+    Rectangle logout_rect = { GetScreenWidth() - 130, 16, 110, 32 };
+    AppText(user_label, logout_rect.x - 16 - user_size.x, 24, 14, (Color){180,190,210,255});
+    bool logout_hover = CheckCollisionPointRec(GetMousePosition(), logout_rect);
+    DrawRectangleRounded(logout_rect, 0.25f, 6, logout_hover ? (Color){153,27,27,255} : (Color){71,85,105,255});
+    Vector2 logout_tsize = MeasureTextEx(g_appFont, "Deconnexion", 14, 1);
+    AppText("Deconnexion", logout_rect.x + logout_rect.width/2 - logout_tsize.x/2, logout_rect.y + 8, 14, WHITE);
+    if (logout_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        session_logout(db, &g_session);
+        g_screen = SCREEN_LOGIN;
+    }
+
+    bool modal_active = (*cat_screen_panel != PANEL_NONE);
+
+    /* Search bar */
+    int sx = 20, sy = 94, sw = 400, sh = 32;
+    if (GuiTextBox((Rectangle){ sx, sy, sw, sh }, cat_search, 128, *cat_search_edit) && !modal_active)
+        *cat_search_edit = !*cat_search_edit;
+
+    if (session_can(&g_session, "user.manage")) {
+        if (GuiButton((Rectangle){ GetScreenWidth() - 190, sy, 170, sh }, "Gerer utilisateurs") && !modal_active) {
+            *cat_screen_panel = PANEL_MANAGE_USERS;
+        }
+    }
+
+    int add_btn_x = sx + sw + 10;
+    if (GuiButton((Rectangle){ add_btn_x, sy, 190, sh }, "+ Ajouter categorie") && !modal_active) {
+        *cat_screen_panel = PANEL_ADD_PRODUCT; /* reused as a generic "add category" dialog trigger below */
+        cat_rename_input[0] = '\0';
+        *cat_rename_edit = true;
+        *cat_renaming = false;
+        *cat_action_id = 0;
+    }
+
+    /* Alphabetical list (already sorted by db_list_categories via
+       ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
+    int row_y = 150;
+    int shown = 0;
+    for (int ci = 0; ci < *total_categories; ci++) {
+               if (cat_search[0] && !ci_str_contains(all_categories[ci].name, cat_search)) continue;
+        shown++;
+
+        Rectangle row_rect = { sx, row_y - 4, GetScreenWidth() - 2*sx, 44 };
+        bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect) && !modal_active;
+        if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+        DrawLine((int)row_rect.x, row_y + 40, (int)(row_rect.x + row_rect.width), row_y + 40, COLOR_BORDER);
+
+        AppTextBold(all_categories[ci].name, sx + 8, row_y + 8, 16, (Color){30,41,59,255});
+
+        Rectangle modify_btn = { GetScreenWidth() - 260, row_y + 6, 90, 28 };
+        Rectangle delete_btn = { GetScreenWidth() - 160, row_y + 6, 90, 28 };
+
+        bool mod_hover = CheckCollisionPointRec(GetMousePosition(), modify_btn) && !modal_active;
+        DrawRectangleLinesEx(modify_btn, 1, COLOR_BORDER);
+        if (mod_hover) DrawRectangleRec(modify_btn, (Color){239,246,255,255});
+        AppText("Modifier", modify_btn.x + 14, modify_btn.y + 6, 13, (Color){30,41,59,255});
+        if (mod_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            *cat_action_id = all_categories[ci].id;
+            snprintf(cat_rename_input, 64, "%s", all_categories[ci].name);
+            *cat_renaming = true;
+            *cat_rename_edit = true;
+            *cat_screen_panel = PANEL_EDIT_PRODUCT; /* reused as "rename category" dialog trigger */
+        }
+
+        bool del_hover = CheckCollisionPointRec(GetMousePosition(), delete_btn) && !modal_active;
+        DrawRectangleLinesEx(delete_btn, 1, COLOR_BORDER);
+        if (del_hover) DrawRectangleRec(delete_btn, (Color){254,242,242,255});
+        AppText("Supprimer", delete_btn.x + 10, delete_btn.y + 6, 13, (Color){185,28,28,255});
+        if (del_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            *cat_action_id = all_categories[ci].id;
+            *cat_screen_panel = PANEL_CONFIRM_DELETE_CATEGORY;
+        }
+
+        /* Clicking the row itself (not the two buttons) enters the category. */
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) &&
+            !CheckCollisionPointRec(GetMousePosition(), modify_btn) &&
+            !CheckCollisionPointRec(GetMousePosition(), delete_btn)) {
+            g_active_category_id = all_categories[ci].id;
+            snprintf(g_active_category_name, sizeof g_active_category_name, "%s", all_categories[ci].name);
+            g_screen = SCREEN_MAIN;
+        }
+
+        row_y += 48;
+    }
+
+    if (shown == 0) {
+        AppText(cat_search[0] ? "Aucune categorie ne correspond a la recherche."
+                              : "Aucune categorie pour le moment. Cliquez sur \"+ Ajouter categorie\".",
+                 sx, row_y, 14, COLOR_TEXT_MUTED);
+    }
+
+    /* ---- Add category dialog (reusing PANEL_ADD_PRODUCT as the trigger) ---- */
+    if (*cat_screen_panel == PANEL_ADD_PRODUCT && !*cat_renaming) {
+        Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 80, 400, 160 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Nouvelle categorie");
+        float bx = box.x + 20, by = box.y + 40;
+        GuiTextBox((Rectangle){ bx, by, box.width - 40, 30 }, cat_rename_input, 64, *cat_rename_edit);
+
+        by += 46;
+        bool confirm = GuiButton((Rectangle){ bx, by, 150, 32 }, "Ajouter") ||
+                       (*cat_rename_edit && IsKeyPressed(KEY_ENTER));
+        if (confirm) {
+            if (cat_rename_input[0] != '\0') {
+                int new_id;
+                if (db_find_or_create_category(db, cat_rename_input, &new_id)) {
+                    inv_refresh_categories(db);
+                    *total_categories = inv_get_categories(&all_categories);
+                    toast_show(toast, "Categorie ajoutee", false);
+                } else {
+                    toast_show(toast, "Erreur lors de l'ajout", true);
+                }
+            }
+            *cat_screen_panel = PANEL_NONE;
+        }
+        if (GuiButton((Rectangle){ bx + 160, by, 150, 32 }, "Annuler")) *cat_screen_panel = PANEL_NONE;
+    }
+
+    /* ---- Rename category dialog (reusing PANEL_EDIT_PRODUCT as the trigger) ---- */
+    if (*cat_screen_panel == PANEL_EDIT_PRODUCT && *cat_renaming) {
+        Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 80, 400, 160 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Renommer la categorie");
+        float bx = box.x + 20, by = box.y + 40;
+        GuiTextBox((Rectangle){ bx, by, box.width - 40, 30 }, cat_rename_input, 64, *cat_rename_edit);
+
+        by += 46;
+        bool confirm = GuiButton((Rectangle){ bx, by, 150, 32 }, "Enregistrer") ||
+                       (*cat_rename_edit && IsKeyPressed(KEY_ENTER));
+        if (confirm) {
+            if (cat_rename_input[0] != '\0' &&
+                db_update_category_name(db, *cat_action_id, cat_rename_input)) {
+                inv_refresh_categories(db);
+                *total_categories = inv_get_categories(&all_categories);
+                toast_show(toast, "Categorie renommee", false);
+            } else {
+                toast_show(toast, "Erreur lors du renommage", true);
+            }
+            *cat_screen_panel = PANEL_NONE;
+            *cat_renaming = false;
+        }
+        if (GuiButton((Rectangle){ bx + 160, by, 150, 32 }, "Annuler")) {
+            *cat_screen_panel = PANEL_NONE;
+            *cat_renaming = false;
+        }
+    }
+
+    /* ---- Confirm delete (reuses your existing PANEL_CONFIRM_DELETE_CATEGORY UI logic) ---- */
+    if (*cat_screen_panel == PANEL_CONFIRM_DELETE_CATEGORY) {
+        Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 90, 400, 180 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Confirmer la suppression");
+        float bx = box.x + 20, by = box.y + 40;
+        AppText("Supprimer cette categorie ?", bx, by, 14, (Color){30,41,59,255});
+
+        by += 40;
+        if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, supprimer")) {
+            char err[256];
+            if (inv_delete_category(*cat_action_id, &g_session, err, sizeof err)) {
+                *total_categories = inv_get_categories(&all_categories);
+                toast_show(toast, "Categorie supprimee", false);
+            } else {
+                toast_show(toast, err, true);
+            }
+            *cat_screen_panel = PANEL_NONE;
+        }
+        if (GuiButton((Rectangle){ bx + 180, by, 160, 34 }, "Annuler")) *cat_screen_panel = PANEL_NONE;
+    }
+}
 
 static void AppText(const char *text, int x, int y, int size, Color color) {
     DrawTextEx(g_appFont, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
@@ -405,6 +612,15 @@ void gui_run(WmsDb *db) {
     char mgmt_user_roles[64][16];
     int  mgmt_user_count = 0;
 
+        /* Categories home screen state */
+    char cat_search[128] = {0};
+    bool cat_search_edit = false;
+    int  cat_action_id = 0;         /* which category a rename/delete targets */
+    char cat_rename_input[64] = {0};
+    bool cat_rename_edit = false;
+    bool cat_renaming = false;      /* inline rename mode active for cat_action_id */
+    ActivePanel cat_screen_panel = PANEL_NONE; /* reuses your existing panel enum for Add/Delete-confirm dialogs on this screen */
+
     while (!WindowShouldClose()) {
 
         /* ---- session bookkeeping (runs every frame, before anything else) ---- */
@@ -412,7 +628,8 @@ void gui_run(WmsDb *db) {
             (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT))) {
             session_touch(&g_session);
         }
-        if (g_screen == SCREEN_MAIN && session_is_locked(&g_session, 300)) {
+                if ((g_screen == SCREEN_MAIN || g_screen == SCREEN_CATEGORIES) &&
+            session_is_locked(&g_session, 300)) {
             g_screen = SCREEN_LOGIN;
             login_password[0] = '\0';
         }
@@ -433,6 +650,17 @@ void gui_run(WmsDb *db) {
             continue;
         }
 
+        /* ---- categories home screen ---- */
+        if (g_screen == SCREEN_CATEGORIES) {
+            BeginDrawing();
+            draw_categories_screen(db, all_categories, &total_categories,
+                                    cat_search, &cat_search_edit,
+                                    &cat_action_id, cat_rename_input, &cat_rename_edit,
+                                    &cat_renaming, &cat_screen_panel, &toast);
+            EndDrawing();
+            continue;
+        }
+
         /* ---- update (main screen only, reached once logged in) ---- */
         if (toast.timer > 0) toast.timer -= GetFrameTime();
 
@@ -446,7 +674,19 @@ void gui_run(WmsDb *db) {
 
         Product **visible_list = is_filtering ? filtered : NULL;
         (void)visible_list;
-        int visible_count = is_filtering ? filtered_count : total_products;
+        /* Build the category-filtered view fresh each frame. Search still
+          narrows within it via inv_search on top. */
+        static Product *cat_filtered[WMS_MAX_PRODUCTS];
+        int cat_filtered_count = 0;
+        if (g_active_category_id > 0) {
+            for (int pi = 0; pi < total_products; pi++)
+                if (all_products[pi].category_id == g_active_category_id)
+                    cat_filtered[cat_filtered_count++] = &all_products[pi];
+        }
+
+        int visible_count = is_filtering ? filtered_count
+                            : (g_active_category_id > 0 ? cat_filtered_count : total_products);
+
         int page_count = (visible_count + PAGE_SIZE - 1) / PAGE_SIZE;
         if (page >= page_count) page = page_count > 0 ? page_count - 1 : 0;
         bool modal_active = (panel != PANEL_NONE);
@@ -463,6 +703,17 @@ void gui_run(WmsDb *db) {
         } else {
             AppTextBold("WAREHOUSE WMS", 20, 20, 22, RAYWHITE);
         }
+
+        Rectangle back_btn = { 200, 12, 130, 30 };
+        bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn) && !modal_active;
+        if (back_hover) DrawRectangleRounded(back_btn, 0.2f, 4, (Color){37,54,88,255});
+        AppText("< Categories", back_btn.x + 10, back_btn.y + 7, 13, RAYWHITE);
+        if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            g_screen = SCREEN_CATEGORIES;
+            EndDrawing();
+            continue;
+        }
+        AppText(g_active_category_name, 340, 20, 16, (Color){180,190,210,255});
 
         /* Right-aligned cluster: logout button anchored to the edge,
            username text placed to its LEFT with a real gap - measured,
@@ -522,7 +773,8 @@ void gui_run(WmsDb *db) {
 
         if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")&& !modal_active) {
             if (selected_index >= 0) {
-                Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
+                Product *p = is_filtering ? filtered[selected_index]
+            : (g_active_category_id > 0 ? cat_filtered[selected_index] : &all_products[selected_index]);
                 edit_product_id = p->id;
                 edit_product_version = p->version;
                 snprintf(e_name, sizeof e_name, "%s", p->name);
@@ -572,7 +824,8 @@ void gui_run(WmsDb *db) {
         int shown_this_page = 0;
 
         for (int i = start; i < visible_count && shown_this_page < PAGE_SIZE; i++, shown_this_page++) {
-            Product *p = is_filtering ? filtered[i] : &all_products[i];
+            Product *p = is_filtering ? filtered[i]
+            : (g_active_category_id > 0 ? cat_filtered[i] : &all_products[i]);
             Rectangle row_rect = { table_x - 4, row_y - 4, GetScreenWidth() - 2 * table_x + 8, 26 };
             bool hovered = CheckCollisionPointRec(GetMousePosition(), row_rect);
             bool selected = (selected_index == i);

@@ -290,3 +290,14 @@ bool db_update_user_role(WmsDb *db, int user_id, const char *new_role) {
     sqlite3_finalize(st);
     return ok;
 }
+
+bool db_update_category_name(WmsDb *db, int category_id, const char *new_name) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "UPDATE categories SET name = ?1 WHERE id = ?2;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, new_name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 2, category_id);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    return ok;
+}

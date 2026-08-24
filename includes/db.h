@@ -60,4 +60,6 @@ int db_count_products_in_category(WmsDb *db, int category_id);
 int  db_list_users(WmsDb *db, int *out_ids, char names[][64], char roles[][16], int max_count);
 bool db_update_user_role(WmsDb *db, int user_id, const char *new_role);
 
+bool db_update_category_name(WmsDb *db, int category_id, const char *new_name);
+
 #endif
