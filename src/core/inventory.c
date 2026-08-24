@@ -126,8 +126,20 @@ bool inv_add_product(const Product *in, char *err_out, size_t err_len) {
         return false;
     }
 
+        /* Generate from the database's real max, not the in-memory active
+       count - soft-deleted products still occupy their prd_number
+       forever, so counting only active rows can collide with an old,
+       inactive product's number. */
+    int next_num = 1;
+    sqlite3_stmt *num_st;
+    sqlite3_prepare_v2(g_db->handle,
+        "SELECT COALESCE(MAX(CAST(SUBSTR(prd_number, 5) AS INTEGER)), 0) + 1 FROM products;",
+        -1, &num_st, NULL);
+    if (sqlite3_step(num_st) == SQLITE_ROW) next_num = sqlite3_column_int(num_st, 0);
+    sqlite3_finalize(num_st);
+
     char prd[16];
-    snprintf(prd, sizeof prd, "PRD-%03d", g_product_count + 1);
+    snprintf(prd, sizeof prd, "PRD-%03d", next_num);
 
     sqlite3_stmt *st;
         sqlite3_prepare_v2(g_db->handle,
