@@ -295,6 +295,15 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
     t->is_error = is_error;
 }
 
+/* Finds a product by its stable database id, searching the full in-memory
+ * array directly - independent of whatever filter/category view is
+ * currently on screen. Returns NULL if not found (e.g. it was deleted). */
+static Product *find_product_by_id(Product *arr, int count, int id) {
+    for (int i = 0; i < count; i++)
+        if (arr[i].id == id) return &arr[i];
+    return NULL;
+}
+
 /* Portable case-insensitive substring search (strcasestr is a glibc/BSD
  * extension not reliably available on MinGW). Returns true if `needle`
  * appears anywhere in `haystack`, ignoring case. */
@@ -608,7 +617,10 @@ void gui_run(WmsDb *db) {
     int filtered_count = 0;
     bool is_filtering = false;
 
-    int selected_index = -1; /* index into whichever list is showing */
+    int selected_product_id = -1; /* database id of the selected row - stable
+                                      across filtering/category views, unlike
+                                      an array index which meant different
+                                      things depending on which list was active */
 
     ActivePanel panel = PANEL_NONE;
     Toast toast = {0};
@@ -830,16 +842,15 @@ void gui_run(WmsDb *db) {
         }
         tx += 160 + btn_gap;
 
-        if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")&& !modal_active) {
-            if (selected_index >= 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
+        if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")) {
+            if (selected_product_id > 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
             else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
         tx += 140 + btn_gap;
 
         if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")&& !modal_active) {
-            if (selected_index >= 0) {
-                Product *p = is_filtering ? filtered[selected_index]
-            : (g_active_category_id > 0 ? cat_filtered[selected_index] : &all_products[selected_index]);
+            Product *p = find_product_by_id(all_products, total_products, selected_product_id);
+            if (p) {
                 edit_product_id = p->id;
                 edit_product_version = p->version;
                 snprintf(e_name, sizeof e_name, "%s", p->name);
@@ -853,9 +864,9 @@ void gui_run(WmsDb *db) {
         }
         tx += 100 + btn_gap;
 
-        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")&& !modal_active) {
-            if (selected_index >= 0) {
-                Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
+                if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")) {
+            Product *p = find_product_by_id(all_products, total_products, selected_product_id);
+            if (p) {
                 edit_product_id = p->id;
                 panel = PANEL_CONFIRM_DELETE_PRODUCT;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
@@ -889,16 +900,16 @@ void gui_run(WmsDb *db) {
         int shown_this_page = 0;
 
         for (int i = start; i < visible_count && shown_this_page < PAGE_SIZE; i++, shown_this_page++) {
-            Product *p = is_filtering ? filtered[i]
-            : (g_active_category_id > 0 ? cat_filtered[i] : &all_products[i]);
+                       Product *p = is_filtering ? filtered[i]
+                        : (g_active_category_id > 0 ? cat_filtered[i] : &all_products[i]);
             Rectangle row_rect = { table_x - 4, row_y - 4, GetScreenWidth() - 2 * table_x + 8, 26 };
             bool hovered = CheckCollisionPointRec(GetMousePosition(), row_rect);
-            bool selected = (selected_index == i);
+            bool selected = (selected_product_id == p->id);
 
             if (selected) DrawRectangleRec(row_rect, (Color){ 210, 225, 245, 255 });
             else if (hovered) DrawRectangleRec(row_rect, (Color){ 235, 240, 248, 255 });
 
-                        if (hovered && !modal_active && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) selected_index = i;
+            if (hovered && !modal_active && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) selected_product_id = p->id;
 
             AppText(p->sku, col_sku, row_y, 14, BLACK);
             AppText(p->name, col_name, row_y, 14, BLACK);
@@ -1231,7 +1242,7 @@ void gui_run(WmsDb *db) {
                 char err[256];
                 if (inv_delete_product(edit_product_id, &g_session, err, sizeof err)) {
                     total_products = inv_all_products(&all_products);
-                    selected_index = -1;
+                    selected_product_id = -1;
                     toast_show(&toast, "Produit supprime", false);
                 } else {
                     toast_show(&toast, err, true); /* e.g. "stock restant non nul" */
@@ -1335,8 +1346,9 @@ void gui_run(WmsDb *db) {
         }
 
         /* ---- Movement panel ---- */
-        if (panel == PANEL_MOVEMENT && selected_index >= 0) {
-            Product *p = is_filtering ? filtered[selected_index] : &all_products[selected_index];
+        Product *movement_product = find_product_by_id(all_products, total_products, selected_product_id);
+        if (panel == PANEL_MOVEMENT && movement_product != NULL) {
+            Product *p = movement_product;
             Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 140, 400, 260 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, TextFormat("Mouvement - %s", p->name));
