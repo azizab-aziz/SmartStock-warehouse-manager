@@ -319,7 +319,9 @@ static bool ci_str_contains(const char *haystack, const char *needle) {
 static void draw_categories_screen(WmsDb *db, Category *all_categories, int *total_categories,
                                     char *cat_search, bool *cat_search_edit,
                                     int *cat_action_id, char *cat_rename_input, bool *cat_rename_edit,
-                                    bool *cat_renaming, ActivePanel *cat_screen_panel, Toast *toast) {
+                                    bool *cat_renaming, ActivePanel *cat_screen_panel, Toast *toast,
+                                    int *mgmt_user_ids, char mgmt_user_names[][64], char mgmt_user_roles[][16],
+                                    int *mgmt_user_count) {
     ClearBackground((Color){ 245, 247, 250, 255 });
 
     DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
@@ -497,7 +499,48 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         }
         if (GuiButton((Rectangle){ bx + 180, by, 160, 34 }, "Annuler")) *cat_screen_panel = PANEL_NONE;
     }
+
+
+    /* ---- Manage users panel (was missing - this was the actual bug) ---- */
+    if (*cat_screen_panel == PANEL_MANAGE_USERS) {
+        float list_h = 36.0f * (*mgmt_user_count > 0 ? *mgmt_user_count : 1) + 90;
+        Rectangle box = { GetScreenWidth()/2 - 260, GetScreenHeight()/2 - list_h/2, 520, list_h };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Gerer les utilisateurs");
+
+        float bx = box.x + 20, by = box.y + 40;
+        const char *roles[3] = { "operateur", "manager", "admin" };
+
+        for (int ui = 0; ui < *mgmt_user_count; ui++) {
+            AppText(mgmt_user_names[ui], bx, by + 6, 14, (Color){30,41,59,255});
+
+            for (int ri = 0; ri < 3; ri++) {
+                bool is_current = strcmp(mgmt_user_roles[ui], roles[ri]) == 0;
+                Rectangle rbtn = { box.x + box.width - 300 + ri * 100, by, 90, 28 };
+                bool hover = CheckCollisionPointRec(GetMousePosition(), rbtn);
+                DrawRectangleRec(rbtn, is_current ? COLOR_ACCENT_BLUE :
+                                         (hover ? (Color){239,246,255,255} : WHITE));
+                DrawRectangleLinesEx(rbtn, 1, COLOR_BORDER);
+                AppText(roles[ri], rbtn.x + 6, rbtn.y + 6, 12,
+                         is_current ? WHITE : (Color){30,41,59,255});
+
+                if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !is_current) {
+                    if (db_update_user_role(db, mgmt_user_ids[ui], roles[ri])) {
+                        snprintf(mgmt_user_roles[ui], 16, "%s", roles[ri]);
+                        toast_show(toast, "Role mis a jour", false);
+                    } else {
+                        toast_show(toast, "Erreur lors de la mise a jour", true);
+                    }
+                }
+            }
+            by += 36;
+        }
+
+        if (GuiButton((Rectangle){ bx, box.y + box.height - 50, 130, 32 }, "Fermer"))
+            *cat_screen_panel = PANEL_NONE;
+    }
 }
+
 
 static void AppText(const char *text, int x, int y, int size, Color color) {
     DrawTextEx(g_appFont, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
@@ -652,11 +695,14 @@ void gui_run(WmsDb *db) {
 
         /* ---- categories home screen ---- */
         if (g_screen == SCREEN_CATEGORIES) {
+            if (cat_screen_panel == PANEL_MANAGE_USERS)
+                mgmt_user_count = db_list_users(db, mgmt_user_ids, mgmt_user_names, mgmt_user_roles, 64);
             BeginDrawing();
             draw_categories_screen(db, all_categories, &total_categories,
                                     cat_search, &cat_search_edit,
                                     &cat_action_id, cat_rename_input, &cat_rename_edit,
-                                    &cat_renaming, &cat_screen_panel, &toast);
+                                    &cat_renaming, &cat_screen_panel, &toast,
+                                    mgmt_user_ids, mgmt_user_names, mgmt_user_roles, &mgmt_user_count);
             EndDrawing();
             continue;
         }
