@@ -330,7 +330,8 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
                                     int *cat_action_id, char *cat_rename_input, bool *cat_rename_edit,
                                     bool *cat_renaming, ActivePanel *cat_screen_panel, Toast *toast,
                                     int *mgmt_user_ids, char mgmt_user_names[][64], char mgmt_user_roles[][16],
-                                    int *mgmt_user_count) {
+                                    int *mgmt_user_count,
+                                    char *global_search, bool *global_search_edit) {
     ClearBackground((Color){ 245, 247, 250, 255 });
 
     DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
@@ -359,6 +360,14 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     if (GuiTextBox((Rectangle){ sx, sy, sw, sh }, cat_search, 128, *cat_search_edit) && !modal_active)
         *cat_search_edit = !*cat_search_edit;
 
+    /* Global product search - separate from the category-name filter
+    above. Searches every product regardless of category, and shows
+    which category each result belongs to. */
+    int gsx = sx, gsy = sy + sh + 34;
+    GuiLabel((Rectangle){ gsx, gsy - 20, 300, 18 }, "Rechercher un produit (toutes categories)");
+    if (GuiTextBox((Rectangle){ gsx, gsy, sw, sh }, global_search, 128, *global_search_edit) && !modal_active)
+        *global_search_edit = !*global_search_edit;
+
     if (session_can(&g_session, "user.manage")) {
         if (GuiButton((Rectangle){ GetScreenWidth() - 190, sy, 170, sh }, "Gerer utilisateurs") && !modal_active) {
             *cat_screen_panel = PANEL_MANAGE_USERS;
@@ -376,9 +385,53 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
 
     /* Alphabetical list (already sorted by db_list_categories via
        ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
-    int row_y = 150;
+    int row_y = 220; /* pushed down to make room for the new search box */
     int shown = 0;
-    for (int ci = 0; ci < *total_categories; ci++) {
+
+    /* If a global product search is active, show matching products
+       instead of the category list - each result labelled with its
+       category so you always know where it lives. */
+    if (global_search[0] != '\0') {
+        Product *all_products_ref;
+        int total_products_ref = inv_all_products(&all_products_ref);
+        Product *matches[64];
+        int match_count = inv_search(global_search, matches, 64);
+
+        AppText(TextFormat("%d resultat(s) pour \"%s\"", match_count, global_search),
+                 gsx, row_y - 20, 13, COLOR_TEXT_MUTED);
+
+        if (match_count == 0) {
+            AppText("Aucun produit ne correspond a cette recherche.", sx, row_y, 14, COLOR_TEXT_MUTED);
+        }
+
+        for (int mi = 0; mi < match_count; mi++) {
+            Product *p = matches[mi];
+            Rectangle row_rect = { sx, row_y - 4, GetScreenWidth() - 2*sx, 44 };
+            bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect) && !modal_active;
+            if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+            DrawLine((int)row_rect.x, row_y + 40, (int)(row_rect.x + row_rect.width), row_y + 40, COLOR_BORDER);
+
+            AppTextBold(p->name, sx + 8, row_y + 4, 15, (Color){30,41,59,255});
+            AppText(p->sku, sx + 8, row_y + 24, 12, COLOR_TEXT_MUTED);
+
+            /* Category label - the whole point of this feature. */
+            const char *cat_name = "Sans categorie";
+            for (int ci2 = 0; ci2 < *total_categories; ci2++)
+                if (all_categories[ci2].id == p->category_id) { cat_name = all_categories[ci2].name; break; }
+            Vector2 cat_size = MeasureTextEx(g_appFont, cat_name, 13, 1);
+            AppText(cat_name, GetScreenWidth() - sx - cat_size.x - 8, row_y + 12, 13, COLOR_ACCENT_BLUE);
+
+            if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                g_active_category_id = p->category_id;
+                for (int ci2 = 0; ci2 < *total_categories; ci2++)
+                    if (all_categories[ci2].id == p->category_id)
+                        snprintf(g_active_category_name, sizeof g_active_category_name, "%s", all_categories[ci2].name);
+                g_screen = SCREEN_MAIN;
+            }
+            row_y += 48;
+        }
+    }else{
+        for (int ci = 0; ci < *total_categories; ci++) {
                if (cat_search[0] && !ci_str_contains(all_categories[ci].name, cat_search)) continue;
         shown++;
 
@@ -425,11 +478,13 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         row_y += 48;
     }
 
+
     if (shown == 0) {
         AppText(cat_search[0] ? "Aucune categorie ne correspond a la recherche."
                               : "Aucune categorie pour le moment. Cliquez sur \"+ Ajouter categorie\".",
                  sx, row_y, 14, COLOR_TEXT_MUTED);
     }
+ }
 
     /* ---- Add category dialog (reusing PANEL_ADD_PRODUCT as the trigger) ---- */
     if (*cat_screen_panel == PANEL_ADD_PRODUCT && !*cat_renaming) {
@@ -670,6 +725,8 @@ void gui_run(WmsDb *db) {
         /* Categories home screen state */
     char cat_search[128] = {0};
     bool cat_search_edit = false;
+    char global_product_search[128] = {0};
+    bool global_search_edit = false;
     int  cat_action_id = 0;         /* which category a rename/delete targets */
     char cat_rename_input[64] = {0};
     bool cat_rename_edit = false;
@@ -710,11 +767,12 @@ void gui_run(WmsDb *db) {
             if (cat_screen_panel == PANEL_MANAGE_USERS)
                 mgmt_user_count = db_list_users(db, mgmt_user_ids, mgmt_user_names, mgmt_user_roles, 64);
             BeginDrawing();
-            draw_categories_screen(db, all_categories, &total_categories,
+        draw_categories_screen(db, all_categories, &total_categories,
                                     cat_search, &cat_search_edit,
                                     &cat_action_id, cat_rename_input, &cat_rename_edit,
                                     &cat_renaming, &cat_screen_panel, &toast,
-                                    mgmt_user_ids, mgmt_user_names, mgmt_user_roles, &mgmt_user_count);
+                                    mgmt_user_ids, mgmt_user_names, mgmt_user_roles, &mgmt_user_count,
+                                    global_product_search, &global_search_edit);
             EndDrawing();
             continue;
         }
@@ -722,8 +780,18 @@ void gui_run(WmsDb *db) {
         /* ---- update (main screen only, reached once logged in) ---- */
         if (toast.timer > 0) toast.timer -= GetFrameTime();
 
-        if (strlen(search_query) > 0) {
-            filtered_count = inv_search(search_query, filtered, WMS_MAX_PRODUCTS);
+               if (strlen(search_query) > 0) {
+            /* Search globally first, then narrow to the active category so
+               results never leak in from other categories while you're
+               inside one. */
+            Product *raw_matches[WMS_MAX_PRODUCTS];
+            int raw_count = inv_search(search_query, raw_matches, WMS_MAX_PRODUCTS);
+            filtered_count = 0;
+            for (int mi = 0; mi < raw_count; mi++) {
+                if (g_active_category_id <= 0 || raw_matches[mi]->category_id == g_active_category_id) {
+                    filtered[filtered_count++] = raw_matches[mi];
+                }
+            }
             is_filtering = true;
         } else {
             is_filtering = false;
@@ -800,19 +868,7 @@ void gui_run(WmsDb *db) {
         snprintf(subtitle, sizeof subtitle, "%d produits", shown_count);
         AppText(subtitle, 20, 8 + header_logo_h + 4, 14, (Color){180,190,210,255});
 
-        /* --- DEBUG: one-shot dump of the live comparison state --- */
-        static bool dumped_once = false;
-        if (!dumped_once) {
-            FILE *live_log = fopen("debug_live_filter.txt", "w");
-            fprintf(live_log, "g_active_category_id = %d\n", g_active_category_id);
-            fprintf(live_log, "total_products = %d\n", total_products);
-            for (int pi = 0; pi < total_products; pi++) {
-                fprintf(live_log, "  product id=%d sku=%s category_id=%d\n",
-                         all_products[pi].id, all_products[pi].sku, all_products[pi].category_id);
-            }
-            fclose(live_log);
-            dumped_once = true;
-        }
+
 
 
 

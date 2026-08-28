@@ -99,9 +99,7 @@ bool inv_init(WmsDb *db) {
 
     g_category_count = db_list_categories(g_db, g_categories, WMS_MAX_CATEGORIES);
 
-    FILE *init_log = fopen("debug_init_count.txt", "w");
-    fprintf(init_log, "g_product_count after load = %d\n", g_product_count);
-    fclose(init_log);
+
 
     return true;
 }
