@@ -800,6 +800,20 @@ void gui_run(WmsDb *db) {
         snprintf(subtitle, sizeof subtitle, "%d produits", shown_count);
         AppText(subtitle, 20, 8 + header_logo_h + 4, 14, (Color){180,190,210,255});
 
+        /* --- DEBUG: one-shot dump of the live comparison state --- */
+        static bool dumped_once = false;
+        if (!dumped_once) {
+            FILE *live_log = fopen("debug_live_filter.txt", "w");
+            fprintf(live_log, "g_active_category_id = %d\n", g_active_category_id);
+            fprintf(live_log, "total_products = %d\n", total_products);
+            for (int pi = 0; pi < total_products; pi++) {
+                fprintf(live_log, "  product id=%d sku=%s category_id=%d\n",
+                         all_products[pi].id, all_products[pi].sku, all_products[pi].category_id);
+            }
+            fclose(live_log);
+            dumped_once = true;
+        }
+
 
 
         if (logout_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
@@ -811,6 +825,7 @@ void gui_run(WmsDb *db) {
         }
 
         /* Search bar - own row */
+
         int sx = 20, sy = 94, sw = 400, sh = 32;
         if (GuiTextBox((Rectangle){ sx, sy, sw, sh }, search_query, sizeof search_query, search_edit))
             search_edit = !search_edit;

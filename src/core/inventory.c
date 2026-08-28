@@ -65,9 +65,9 @@ bool inv_init(WmsDb *db) {
     ht_init(&g_by_barcode, 4096);
 
     sqlite3_stmt *st;
-    int rc = sqlite3_prepare_v2(g_db->handle,
+        int rc = sqlite3_prepare_v2(g_db->handle,
         "SELECT id, prd_number, sku, barcode, name, category, unit, "
-        "unit_price, alert_threshold, supplier_id, photo_path, version "
+        "unit_price, alert_threshold, supplier_id, photo_path, version, category_id "
         "FROM products WHERE active = 1 ORDER BY id;", -1, &st, NULL);
     if (rc != SQLITE_OK) return false;
 
@@ -89,6 +89,7 @@ bool inv_init(WmsDb *db) {
         const unsigned char *ph = sqlite3_column_text(st, 10);
         if (ph) snprintf(p->photo_path, sizeof p->photo_path, "%s", (const char*)ph);
         p->version = sqlite3_column_int(st, 11);
+        p->category_id = sqlite3_column_int(st, 12);
         index_product(p);
     }
     sqlite3_finalize(st);
@@ -97,6 +98,10 @@ bool inv_init(WmsDb *db) {
         refresh_product_total(g_products[i].id);
 
     g_category_count = db_list_categories(g_db, g_categories, WMS_MAX_CATEGORIES);
+
+    FILE *init_log = fopen("debug_init_count.txt", "w");
+    fprintf(init_log, "g_product_count after load = %d\n", g_product_count);
+    fclose(init_log);
 
     return true;
 }
