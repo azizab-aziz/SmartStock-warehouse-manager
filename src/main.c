@@ -39,30 +39,6 @@ int main(void) {
         return 1;
     }
 
-    FILE *startup_log = fopen("debug_startup_products.txt", "w");
-    sqlite3_stmt *st;
-    sqlite3_prepare_v2(db.handle, "SELECT id, sku, name, active, category_id FROM products ORDER BY id;", -1, &st, NULL);
-    while (sqlite3_step(st) == SQLITE_ROW) {
-        fprintf(startup_log, "id=%d sku=%s name=%s active=%d category_id=%d\n",
-                 sqlite3_column_int(st, 0),
-                 sqlite3_column_text(st, 1),
-                 sqlite3_column_text(st, 2),
-                 sqlite3_column_int(st, 3),
-                 sqlite3_column_int(st, 4));
-    }
-    sqlite3_finalize(st);
-    fclose(startup_log);
-
-        FILE *cat_log = fopen("debug_categories.txt", "w");
-    sqlite3_stmt *cst;
-    sqlite3_prepare_v2(db.handle, "SELECT id, name FROM categories ORDER BY id;", -1, &cst, NULL);
-    while (sqlite3_step(cst) == SQLITE_ROW) {
-        fprintf(cat_log, "id=%d name=%s\n",
-                 sqlite3_column_int(cst, 0),
-                 sqlite3_column_text(cst, 1));
-    }
-    sqlite3_finalize(cst);
-    fclose(cat_log);
 
 
         /* Ensure at least one location exists, since movements currently
