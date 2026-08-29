@@ -25,7 +25,7 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -613,14 +613,15 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
 /* Horizontal bar chart: one row per category, bar length proportional to
  * `values[i]`. Shared by the two charts on the stats screen - only the
  * data array and value formatting (count vs. currency) differ. */
-static void draw_hbar_chart(const char *title, Rectangle box, Category *cats,
-                             double *values, int count, Color barColor, bool is_currency) {
+static void draw_hbar_chart(const char *title, Rectangle box, const char *const *labels,
+                             double *values, int count, Color barColor, bool is_currency,
+                             const char *empty_msg) {
     DrawRectangleRounded(box, 0.03f, 6, WHITE);
     DrawRectangleRoundedLines(box, 0.03f, 6, 1, COLOR_BORDER);
     AppTextBold(title, box.x + 16, box.y + 14, 15, (Color){30,41,59,255});
 
     if (count == 0) {
-        AppText("Aucune categorie.", box.x + 16, box.y + 50, 13, COLOR_TEXT_MUTED);
+        AppText(empty_msg, box.x + 16, box.y + 50, 13, COLOR_TEXT_MUTED);
         return;
     }
 
@@ -642,7 +643,7 @@ static void draw_hbar_chart(const char *title, Rectangle box, Category *cats,
     for (int i = 0; i < count && (chart_top + i*row_h + row_h) <= chart_bottom; i++) {
         float y = chart_top + i * row_h;
         char label[40];
-        snprintf(label, sizeof label, "%.20s", cats[i].name);
+        snprintf(label, sizeof label, "%.20s", labels[i]);
         AppText(label, box.x + 16, y + row_h/2 - 7, 13, (Color){30,41,59,255});
 
         float bar_w = (float)(values[i] / max_val) * bar_max_w;
@@ -695,6 +696,66 @@ static void draw_stats_screen(Category *all_categories, int total_categories,
              cats, total_products, total_qty, total_value);
     AppText(summary, 20, 90, 14, COLOR_TEXT_MUTED);
 
+        int chart_top = 120, gap = 30;
+    int chart_h = GetScreenHeight() - chart_top - 30;
+    int chart_w = (GetScreenWidth() - 2*20 - gap) / 2;
+
+    Rectangle left_area  = { 20, chart_top, chart_w, chart_h };
+    Rectangle right_area = { 20 + chart_w + gap, chart_top, chart_w, chart_h };
+
+    const char *cat_labels[128];
+    for (int i = 0; i < cats; i++) cat_labels[i] = all_categories[i].name;
+
+    draw_hbar_chart("Produits par categorie", left_area, cat_labels, counts, cats,
+                     COLOR_ACCENT_BLUE, false, "Aucune categorie.");
+    draw_hbar_chart("Valeur du stock par categorie", right_area, cat_labels, values, cats,
+                     COLOR_ACCENT_TEAL, true, "Aucune categorie.");
+}
+
+static void draw_category_stats_screen(Product *all_products, int total_products) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    char header[96];
+    snprintf(header, sizeof header, "Statistiques - %s", g_active_category_name);
+    AppText(header, 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 110, 20, 90, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Retour", 14, 1);
+    AppText("< Retour", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_MAIN;
+
+    /* products belonging to the active category only (capped at 128) */
+    Product *in_cat[128];
+    int count = 0;
+    for (int pi = 0; pi < total_products && count < 128; pi++)
+        if (all_products[pi].category_id == g_active_category_id)
+            in_cat[count++] = &all_products[pi];
+
+    int total_qty = 0;
+    double total_value = 0;
+    for (int i = 0; i < count; i++) {
+        total_qty += in_cat[i]->total_quantity;
+        total_value += (double)in_cat[i]->total_quantity * in_cat[i]->unit_price;
+    }
+
+    char summary[160];
+    snprintf(summary, sizeof summary, "%d produits | %d unites en stock | %.2f DT de valeur totale",
+             count, total_qty, total_value);
+    AppText(summary, 20, 90, 14, COLOR_TEXT_MUTED);
+
+    const char *labels[128];
+    double qty_vals[128], stock_vals[128];
+    for (int i = 0; i < count; i++) {
+        labels[i] = in_cat[i]->name;
+        qty_vals[i] = (double)in_cat[i]->total_quantity;
+        stock_vals[i] = (double)in_cat[i]->total_quantity * in_cat[i]->unit_price;
+    }
+
     int chart_top = 120, gap = 30;
     int chart_h = GetScreenHeight() - chart_top - 30;
     int chart_w = (GetScreenWidth() - 2*20 - gap) / 2;
@@ -702,8 +763,10 @@ static void draw_stats_screen(Category *all_categories, int total_categories,
     Rectangle left_area  = { 20, chart_top, chart_w, chart_h };
     Rectangle right_area = { 20 + chart_w + gap, chart_top, chart_w, chart_h };
 
-    draw_hbar_chart("Produits par categorie", left_area, all_categories, counts, cats, COLOR_ACCENT_BLUE, false);
-    draw_hbar_chart("Valeur du stock par categorie", right_area, all_categories, values, cats, COLOR_ACCENT_TEAL, true);
+    draw_hbar_chart("Quantite par produit", left_area, labels, qty_vals, count,
+                     COLOR_ACCENT_BLUE, false, "Aucun produit dans cette categorie.");
+    draw_hbar_chart("Valeur du stock par produit", right_area, labels, stock_vals, count,
+                     COLOR_ACCENT_TEAL, true, "Aucun produit dans cette categorie.");
 }
 
 
@@ -881,10 +944,18 @@ void gui_run(WmsDb *db) {
             continue;
         }
 
-        /* ---- statistics screen ---- */
+                /* ---- statistics screen (all categories) ---- */
         if (g_screen == SCREEN_STATS) {
             BeginDrawing();
             draw_stats_screen(all_categories, total_categories, all_products, total_products);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- statistics screen (single category, products) ---- */
+        if (g_screen == SCREEN_CATEGORY_STATS) {
+            BeginDrawing();
+            draw_category_stats_screen(all_products, total_products);
             EndDrawing();
             continue;
         }
@@ -1059,8 +1130,13 @@ void gui_run(WmsDb *db) {
         if (GuiButton((Rectangle){ tx, toolbar_y, 150, sh }, "Gerer categories")&& !modal_active) {
             panel = PANEL_MANAGE_CATEGORIES;
         }
-
         tx += 150 + btn_gap;
+
+        if (GuiButton((Rectangle){ tx, toolbar_y, 130, sh }, "Statistiques")&& !modal_active) {
+            g_screen = SCREEN_CATEGORY_STATS;
+        }
+        tx += 130 + btn_gap;
+
         if (session_can(&g_session, "user.manage")) {
             if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "Gerer utilisateurs")&& !modal_active) {
                 mgmt_user_count = db_list_users(db, mgmt_user_ids, mgmt_user_names, mgmt_user_roles, 64);
