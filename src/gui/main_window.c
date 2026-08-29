@@ -279,7 +279,7 @@ static void draw_login_screen(WmsDb *db) {
 typedef enum { PANEL_NONE, PANEL_ADD_PRODUCT, PANEL_MOVEMENT,
                PANEL_EDIT_PRODUCT, PANEL_CONFIRM_DELETE_PRODUCT,
                PANEL_MANAGE_CATEGORIES, PANEL_CONFIRM_DELETE_CATEGORY,
-               PANEL_MANAGE_USERS } ActivePanel;
+               PANEL_MANAGE_USERS, PANEL_RENAME_CATEGORY } ActivePanel;
 
 /* Small helper: a message that fades out after ~1.5s, per the spec
  * ("Messages de succes avec fade-out apres chaque action"). */
@@ -716,6 +716,9 @@ void gui_run(WmsDb *db) {
     /* Category management panel */
     int delete_category_id = 0;
     char delete_category_name[64] = {0};
+    int  rename_category_id = 0;
+    char rename_category_input[64] = {0};
+    bool rename_category_edit = false;
     /* User management panel (admin only) */
     int  mgmt_user_ids[64];
     char mgmt_user_names[64][64];
@@ -997,11 +1000,30 @@ void gui_run(WmsDb *db) {
             snprintf(price_buf, sizeof price_buf, "%.2f", p->unit_price);
             DrawText(price_buf, col_price, row_y, 14, BLACK);
 
-            if (p->total_quantity <= p->alert_threshold) {
+                        if (p->total_quantity <= p->alert_threshold) {
                 DrawText("STOCK FAIBLE", col_alert, row_y, 12, (Color){ 200, 40, 40, 255 });
             } else {
                 DrawText("OK", col_alert, row_y, 12, (Color){ 40, 150, 70, 255 });
             }
+
+            Rectangle row_modify_btn = { GetScreenWidth() - table_x - 90, row_y - 4, 80, 22 };
+            bool row_modify_hover = CheckCollisionPointRec(GetMousePosition(), row_modify_btn) && !modal_active;
+            DrawRectangleLinesEx(row_modify_btn, 1, COLOR_BORDER);
+            if (row_modify_hover) DrawRectangleRec(row_modify_btn, (Color){239,246,255,255});
+            AppText("Modifier", row_modify_btn.x + 8, row_modify_btn.y + 4, 12, (Color){30,41,59,255});
+            if (row_modify_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                selected_product_id = p->id;
+                edit_product_id = p->id;
+                edit_product_version = p->version;
+                snprintf(e_name, sizeof e_name, "%s", p->name);
+                snprintf(e_price, sizeof e_price, "%.2f", p->unit_price);
+                snprintf(e_threshold, sizeof e_threshold, "%d", p->alert_threshold);
+                e_category_id = p->category_id;
+                snprintf(e_category, sizeof e_category, "%s", p->category);
+                panel = PANEL_EDIT_PRODUCT;
+                ee_name = true; ee_price = ee_threshold = false;
+            }
+
             row_y += 30;
         }
 
@@ -1335,8 +1357,15 @@ void gui_run(WmsDb *db) {
                 AppText("Aucune categorie pour le moment.", bx, by, 14, COLOR_TEXT_MUTED);
                 by += 30;
             }
+
             for (int ci = 0; ci < total_categories; ci++) {
                 AppText(all_categories[ci].name, bx, by + 4, 14, (Color){30,41,59,255});
+                if (GuiButton((Rectangle){ box.x + box.width - 170, by, 70, 26 }, "Modifier")) {
+                    rename_category_id = all_categories[ci].id;
+                    snprintf(rename_category_input, sizeof rename_category_input, "%s", all_categories[ci].name);
+                    rename_category_edit = true;
+                    panel = PANEL_RENAME_CATEGORY;
+                }
                 if (GuiButton((Rectangle){ box.x + box.width - 90, by, 70, 26 }, "Suppr.")) {
                     delete_category_id = all_categories[ci].id;
                     snprintf(delete_category_name, sizeof delete_category_name, "%s", all_categories[ci].name);
@@ -1372,6 +1401,32 @@ void gui_run(WmsDb *db) {
                 }
             }
             if (GuiButton((Rectangle){ bx + 180, by, 160, 34 }, "Annuler")) panel = PANEL_MANAGE_CATEGORIES;
+        }
+
+        /* ---- Rename category (from "Gerer categories" panel) ---- */
+        if (panel == PANEL_RENAME_CATEGORY) {
+            Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 80, 400, 160 };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            GuiPanel(box, "Renommer la categorie");
+            float bx = box.x + 20, by = box.y + 40;
+            if (!rename_category_edit) rename_category_edit = true;
+            GuiTextBox((Rectangle){ bx, by, box.width - 40, 30 }, rename_category_input, 64, rename_category_edit);
+
+            by += 46;
+            bool confirm = GuiButton((Rectangle){ bx, by, 150, 32 }, "Enregistrer") ||
+                           (rename_category_edit && IsKeyPressed(KEY_ENTER));
+            if (confirm) {
+                if (rename_category_input[0] != '\0' &&
+                    db_update_category_name(db, rename_category_id, rename_category_input)) {
+                    inv_refresh_categories(db);
+                    total_categories = inv_get_categories(&all_categories);
+                    toast_show(&toast, "Categorie renommee", false);
+                } else {
+                    toast_show(&toast, "Erreur lors du renommage", true);
+                }
+                panel = PANEL_MANAGE_CATEGORIES;
+            }
+            if (GuiButton((Rectangle){ bx + 160, by, 150, 32 }, "Annuler")) panel = PANEL_MANAGE_CATEGORIES;
         }
 
                 /* ---- Manage users panel (admin only) ---- */
