@@ -25,7 +25,7 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -383,6 +383,11 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         *cat_action_id = 0;
     }
 
+    int stats_btn_x = add_btn_x + 190 + 10;
+    if (GuiButton((Rectangle){ stats_btn_x, sy, 150, sh }, "Statistiques") && !modal_active) {
+        g_screen = SCREEN_STATS;
+    }
+
     /* Alphabetical list (already sorted by db_list_categories via
        ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
     int row_y = 220; /* pushed down to make room for the new search box */
@@ -605,6 +610,102 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     }
 }
 
+/* Horizontal bar chart: one row per category, bar length proportional to
+ * `values[i]`. Shared by the two charts on the stats screen - only the
+ * data array and value formatting (count vs. currency) differ. */
+static void draw_hbar_chart(const char *title, Rectangle box, Category *cats,
+                             double *values, int count, Color barColor, bool is_currency) {
+    DrawRectangleRounded(box, 0.03f, 6, WHITE);
+    DrawRectangleRoundedLines(box, 0.03f, 6, 1, COLOR_BORDER);
+    AppTextBold(title, box.x + 16, box.y + 14, 15, (Color){30,41,59,255});
+
+    if (count == 0) {
+        AppText("Aucune categorie.", box.x + 16, box.y + 50, 13, COLOR_TEXT_MUTED);
+        return;
+    }
+
+    double max_val = 0;
+    for (int i = 0; i < count; i++) if (values[i] > max_val) max_val = values[i];
+    if (max_val <= 0) max_val = 1;
+
+    float chart_top = box.y + 46;
+    float chart_bottom = box.y + box.height - 14;
+    float row_h = (chart_bottom - chart_top) / count;
+    if (row_h > 34) row_h = 34;
+    if (row_h < 16) row_h = 16;
+
+    float label_w = 130;
+    float bar_x = box.x + 16 + label_w;
+    float bar_max_w = box.x + box.width - 16 - bar_x - 70; /* room for value text */
+    if (bar_max_w < 20) bar_max_w = 20;
+
+    for (int i = 0; i < count && (chart_top + i*row_h + row_h) <= chart_bottom; i++) {
+        float y = chart_top + i * row_h;
+        char label[40];
+        snprintf(label, sizeof label, "%.20s", cats[i].name);
+        AppText(label, box.x + 16, y + row_h/2 - 7, 13, (Color){30,41,59,255});
+
+        float bar_w = (float)(values[i] / max_val) * bar_max_w;
+        Rectangle bar = { bar_x, y + row_h/2 - 7, bar_w, 14 };
+        DrawRectangleRounded(bar, 0.3f, 4, barColor);
+
+        char val_buf[32];
+        if (is_currency) snprintf(val_buf, sizeof val_buf, "%.2f DT", values[i]);
+        else             snprintf(val_buf, sizeof val_buf, "%d", (int)values[i]);
+        AppText(val_buf, bar_x + bar_w + 8, y + row_h/2 - 7, 13, COLOR_TEXT_MUTED);
+    }
+}
+
+static void draw_stats_screen(Category *all_categories, int total_categories,
+                               Product *all_products, int total_products) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Statistiques", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    /* per-category stats (capped, same fixed-array style used elsewhere) */
+    int cats = total_categories > 128 ? 128 : total_categories;
+    double counts[128] = {0}, values[128] = {0};
+    int total_qty = 0;
+    double total_value = 0;
+
+    for (int pi = 0; pi < total_products; pi++) {
+        total_qty += all_products[pi].total_quantity;
+        total_value += (double)all_products[pi].total_quantity * all_products[pi].unit_price;
+        for (int ci = 0; ci < cats; ci++) {
+            if (all_products[pi].category_id == all_categories[ci].id) {
+                counts[ci] += 1;
+                values[ci] += (double)all_products[pi].total_quantity * all_products[pi].unit_price;
+                break;
+            }
+        }
+    }
+
+    char summary[160];
+    snprintf(summary, sizeof summary, "%d categories | %d produits | %d unites en stock | %.2f DT de valeur totale",
+             cats, total_products, total_qty, total_value);
+    AppText(summary, 20, 90, 14, COLOR_TEXT_MUTED);
+
+    int chart_top = 120, gap = 30;
+    int chart_h = GetScreenHeight() - chart_top - 30;
+    int chart_w = (GetScreenWidth() - 2*20 - gap) / 2;
+
+    Rectangle left_area  = { 20, chart_top, chart_w, chart_h };
+    Rectangle right_area = { 20 + chart_w + gap, chart_top, chart_w, chart_h };
+
+    draw_hbar_chart("Produits par categorie", left_area, all_categories, counts, cats, COLOR_ACCENT_BLUE, false);
+    draw_hbar_chart("Valeur du stock par categorie", right_area, all_categories, values, cats, COLOR_ACCENT_TEAL, true);
+}
+
 
 static void AppText(const char *text, int x, int y, int size, Color color) {
     DrawTextEx(g_appFont, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
@@ -776,6 +877,14 @@ void gui_run(WmsDb *db) {
                                     &cat_renaming, &cat_screen_panel, &toast,
                                     mgmt_user_ids, mgmt_user_names, mgmt_user_roles, &mgmt_user_count,
                                     global_product_search, &global_search_edit);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- statistics screen ---- */
+        if (g_screen == SCREEN_STATS) {
+            BeginDrawing();
+            draw_stats_screen(all_categories, total_categories, all_products, total_products);
             EndDrawing();
             continue;
         }
