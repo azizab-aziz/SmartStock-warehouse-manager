@@ -779,6 +779,17 @@ static void AppTextBold(const char *text, int x, int y, int size, Color color) {
     DrawTextEx(g_appFontBold, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
 }
 
+/* Wraps the toolbar to a new row if the next button of `width` wouldn't
+ * fit in the current window - keeps every button reachable at any window
+ * size instead of running off the right edge. */
+static void toolbar_wrap(int *tx, int *toolbar_y, int width, int sx, int sh) {
+    if (*tx + width > GetScreenWidth() - 20) {
+        *tx = sx;
+        *toolbar_y += sh + 10;
+    }
+}
+
+
 void gui_run(WmsDb *db) {
         InitWindow(SCREEN_W, SCREEN_H, "Gestion de Stock - Warehouse WMS");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
@@ -1079,10 +1090,12 @@ void gui_run(WmsDb *db) {
            off the right edge at narrower window sizes. Wraps naturally
            since each button's x is computed from the previous one's width
            rather than a hardcoded offset from the search bar. */
+
         int toolbar_y = sy + sh + 22;
         int tx = sx;
         int btn_gap = 10;
 
+            toolbar_wrap(&tx, &toolbar_y, 160, sx, sh);
             if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "+ Nouveau produit")) {
             panel = PANEL_ADD_PRODUCT;
             f_sku[0] = f_name[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
@@ -1101,20 +1114,23 @@ void gui_run(WmsDb *db) {
         }
         tx += 160 + btn_gap;
 
+        toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")) {
             if (selected_product_id > 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
             else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-        tx += 140 + btn_gap;
+                tx += 140 + btn_gap;
 
+        toolbar_wrap(&tx, &toolbar_y, 120, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 120, sh }, "Historique")) {
             if (selected_product_id > 0) {
                 mv_history_count = inv_get_movements(selected_product_id, mv_history, 64);
                 panel = PANEL_MOVEMENT_HISTORY;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-        tx += 120 + btn_gap;
+               tx += 120 + btn_gap;
 
+        toolbar_wrap(&tx, &toolbar_y, 100, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")&& !modal_active) {
             Product *p = find_product_by_id(all_products, total_products, selected_product_id);
             if (p) {
@@ -1131,26 +1147,30 @@ void gui_run(WmsDb *db) {
         }
         tx += 100 + btn_gap;
 
-                if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")) {
+        toolbar_wrap(&tx, &toolbar_y, 110, sx, sh);
+        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")) {
             Product *p = find_product_by_id(all_products, total_products, selected_product_id);
             if (p) {
                 edit_product_id = p->id;
                 panel = PANEL_CONFIRM_DELETE_PRODUCT;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-        tx += 110 + btn_gap;
+                tx += 110 + btn_gap;
 
+        toolbar_wrap(&tx, &toolbar_y, 150, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 150, sh }, "Gerer categories")&& !modal_active) {
             panel = PANEL_MANAGE_CATEGORIES;
         }
         tx += 150 + btn_gap;
 
+        toolbar_wrap(&tx, &toolbar_y, 130, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 130, sh }, "Statistiques")&& !modal_active) {
             g_screen = SCREEN_CATEGORY_STATS;
         }
         tx += 130 + btn_gap;
 
         if (session_can(&g_session, "user.manage")) {
+            toolbar_wrap(&tx, &toolbar_y, 160, sx, sh);
             if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "Gerer utilisateurs")&& !modal_active) {
                 mgmt_user_count = db_list_users(db, mgmt_user_ids, mgmt_user_names, mgmt_user_roles, 64);
                 panel = PANEL_MANAGE_USERS;
@@ -1720,20 +1740,26 @@ void gui_run(WmsDb *db) {
         }
 
         /* ---- Movement history panel ---- */
-        if (panel == PANEL_MOVEMENT_HISTORY) {
+                if (panel == PANEL_MOVEMENT_HISTORY) {
             int rows = mv_history_count > 12 ? 12 : mv_history_count;
             float list_h = 28.0f * (rows > 0 ? rows : 1) + 110;
-            Rectangle box = { GetScreenWidth()/2 - 320, GetScreenHeight()/2 - list_h/2, 640, list_h };
+            int box_w = 820;
+            if (box_w > GetScreenWidth() - 40) box_w = GetScreenWidth() - 40;
+            Rectangle box = { GetScreenWidth()/2 - box_w/2.0f, GetScreenHeight()/2 - list_h/2, (float)box_w, list_h };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             Product *hist_p = find_product_by_id(all_products, total_products, selected_product_id);
             GuiPanel(box, TextFormat("Historique des mouvements - %s", hist_p ? hist_p->name : ""));
 
             float bx = box.x + 20, by = box.y + 40;
-            AppText("Date/heure", bx, by, 12, DARKGRAY);
-            AppText("Qte", bx + 150, by, 12, DARKGRAY);
-            AppText("Type", bx + 220, by, 12, DARKGRAY);
-            AppText("Utilisateur", bx + 340, by, 12, DARKGRAY);
-            AppText("Reference / raison", bx + 460, by, 12, DARKGRAY);
+            float col_date = bx, col_qty = bx + 150, col_type = bx + 210,
+                  col_user = bx + 330, col_ref = bx + 460;
+            float ref_w = (box.x + box.width - 20) - col_ref; /* whatever room is left - always inside the box */
+
+            AppText("Date/heure", col_date, by, 12, DARKGRAY);
+            AppText("Qte", col_qty, by, 12, DARKGRAY);
+            AppText("Type", col_type, by, 12, DARKGRAY);
+            AppText("Utilisateur", col_user, by, 12, DARKGRAY);
+            AppText("Reference / raison", col_ref, by, 12, DARKGRAY);
             by += 22;
 
             if (mv_history_count == 0) {
@@ -1743,19 +1769,22 @@ void gui_run(WmsDb *db) {
 
             for (int mi = 0; mi < rows; mi++) {
                 Movement *mv = &mv_history[mi];
-                AppText(mv->created_at, bx, by, 13, (Color){30,41,59,255});
+                AppText(mv->created_at, col_date, by, 13, (Color){30,41,59,255});
 
                 char delta_buf[16];
                 snprintf(delta_buf, sizeof delta_buf, "%+d", mv->delta);
-                AppText(delta_buf, bx + 150, by, 13, mv->delta >= 0 ? COLOR_ACCENT_TEAL : COLOR_ACCENT_RED);
+                AppText(delta_buf, col_qty, by, 13, mv->delta >= 0 ? COLOR_ACCENT_TEAL : COLOR_ACCENT_RED);
 
-                AppText(mv->type, bx + 220, by, 13, (Color){30,41,59,255});
-                AppText(mv->username[0] ? mv->username : "-", bx + 340, by, 13, COLOR_TEXT_MUTED);
+                AppText(mv->type, col_type, by, 13, (Color){30,41,59,255});
+                AppText(mv->username[0] ? mv->username : "-", col_user, by, 13, COLOR_TEXT_MUTED);
 
                 const char *detail = mv->reason[0] ? mv->reason : mv->reference;
-                char detail_buf[40];
-                snprintf(detail_buf, sizeof detail_buf, "%.36s", detail);
-                AppText(detail_buf, bx + 460, by, 13, COLOR_TEXT_MUTED);
+                /* Hard-clipped to whatever room is actually left in the
+                   box, so long reasons can never draw past the rectangle
+                   no matter the box width. */
+                BeginScissorMode((int)col_ref, (int)(by - 2), (int)ref_w, 18);
+                AppText(detail, col_ref, by, 13, COLOR_TEXT_MUTED);
+                EndScissorMode();
 
                 by += 24;
             }
