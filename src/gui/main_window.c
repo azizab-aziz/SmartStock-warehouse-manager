@@ -8,6 +8,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <direct.h>
 
 
 #define _GNU_SOURCE
@@ -296,6 +297,30 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
     t->is_error = is_error;
 }
 
+#define EXPORT_CSV_PATH  "exports/export.csv"
+#define EXPORT_XLSX_PATH "exports/rapport_stock.xlsx"
+#define EXPORT_PY_SCRIPT "python_scripts/export_report.py"
+
+/* Writes the CSV, shells out to the Python/openpyxl script, and reports
+ * success/failure via toast. category_id <= 0 exports every category. */
+static void run_excel_export(int category_id, const char *sheet_name, Toast *toast) {
+    _mkdir("exports"); /* ignored if it already exists */
+
+    char err[256];
+    if (!inv_export_csv(category_id, EXPORT_CSV_PATH, err, sizeof err)) {
+        toast_show(toast, err, true);
+        return;
+    }
+
+    char cmd[700];
+    snprintf(cmd, sizeof cmd, "python \"%s\" \"%s\" \"%s\" \"%s\"",
+             EXPORT_PY_SCRIPT, EXPORT_CSV_PATH, EXPORT_XLSX_PATH, sheet_name);
+    int rc = system(cmd);
+
+    if (rc == 0) toast_show(toast, "Rapport Excel genere (exports/rapport_stock.xlsx)", false);
+    else toast_show(toast, "Erreur lors de la generation du rapport Excel", true);
+}
+
 /* Finds a product by its stable database id, searching the full in-memory
  * array directly - independent of whatever filter/category view is
  * currently on screen. Returns NULL if not found (e.g. it was deleted). */
@@ -387,6 +412,11 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     int stats_btn_x = add_btn_x + 190 + 10;
     if (GuiButton((Rectangle){ stats_btn_x, sy, 150, sh }, "Statistiques") && !modal_active) {
         g_screen = SCREEN_STATS;
+    }
+
+    int export_btn_x = stats_btn_x + 150 + 10;
+    if (GuiButton((Rectangle){ export_btn_x, sy, 150, sh }, "Exporter Excel") && !modal_active) {
+        run_excel_export(0, "Tout le stock", toast);
     }
 
     /* Alphabetical list (already sorted by db_list_categories via
@@ -1168,6 +1198,12 @@ void gui_run(WmsDb *db) {
             g_screen = SCREEN_CATEGORY_STATS;
         }
         tx += 130 + btn_gap;
+
+        toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
+        if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Exporter Excel") && !modal_active) {
+            run_excel_export(g_active_category_id, g_active_category_name, &toast);
+        }
+        tx += 140 + btn_gap;
 
         if (session_can(&g_session, "user.manage")) {
             toolbar_wrap(&tx, &toolbar_y, 160, sx, sh);

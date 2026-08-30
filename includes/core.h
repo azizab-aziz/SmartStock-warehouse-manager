@@ -98,5 +98,9 @@ void inv_refresh_categories(WmsDb *db);
  * safety). On refusal, err_out lists how many products are still linked. */
 bool inv_delete_category(int category_id, const Session *session,
                           char *err_out, size_t err_len);
-
+/* Writes active products to a CSV for the Excel-export pipeline.
+ * category_id <= 0 exports every category; otherwise only that one.
+ * Columns: PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,
+ *          Valeur_Stock,Seuil_Alerte,Statut */
+bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err_len);
 #endif

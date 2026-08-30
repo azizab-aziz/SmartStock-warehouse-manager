@@ -517,6 +517,52 @@ int inv_all_products(Product **out_array) {
     return g_product_count;
 }
 
+/* Doubles any embedded quote so the field stays valid CSV, and wraps in
+ * quotes whenever the raw text contains a quote or a comma (names and
+ * categories can legally contain both). */
+static void csv_write_field(FILE *f, const char *text) {
+    bool needs_quotes = (strchr(text, ',') != NULL) || (strchr(text, '"') != NULL);
+    if (!needs_quotes) {
+        fputs(text, f);
+        return;
+    }
+    fputc('"', f);
+    for (const char *c = text; *c; c++) {
+        if (*c == '"') fputc('"', f); /* double it */
+        fputc(*c, f);
+    }
+    fputc('"', f);
+}
+
+bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err_len) {
+    FILE *f = fopen(path, "w");
+    if (!f) {
+        set_err(err_out, err_len, "Impossible de creer le fichier CSV (dossier manquant ?)");
+        return false;
+    }
+
+    fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\n");
+
+    for (int i = 0; i < g_product_count; i++) {
+        Product *p = &g_products[i];
+        if (category_id > 0 && p->category_id != category_id) continue;
+
+        double stock_value = (double)p->total_quantity * p->unit_price;
+        const char *statut = (p->total_quantity <= p->alert_threshold) ? "STOCK FAIBLE" : "OK";
+
+        csv_write_field(f, p->prd_number); fputc(',', f);
+        csv_write_field(f, p->sku); fputc(',', f);
+        csv_write_field(f, p->name); fputc(',', f);
+        csv_write_field(f, p->category); fputc(',', f);
+        csv_write_field(f, p->unit); fputc(',', f);
+        fprintf(f, "%d,%.2f,%.2f,%d,%s\n",
+                p->total_quantity, p->unit_price, stock_value, p->alert_threshold, statut);
+    }
+
+    fclose(f);
+    return true;
+}
+
 int inv_get_movements(int product_id, Movement *out, int max_results) {
     int count = 0;
     sqlite3_stmt *st;
