@@ -35,7 +35,18 @@ typedef struct {
     char bin[16];
     int  capacity;
 } Location;
-
+typedef struct {
+    int    id;
+    int    product_id;
+    int    location_id;
+    int    delta;         /* positive = in, negative = out */
+    char   type[24];       /* "reception", "expedition", etc. - see movement_type_str() */
+    char   reference[64];
+    int    user_id;
+    char   username[64];   /* joined from users, empty if unknown/deleted */
+    char   reason[128];
+    char   created_at[32]; /* "YYYY-MM-DD HH:MM:SS", from SQLite datetime('now') */
+} Movement;
 typedef enum {
     MV_RECEPTION, MV_RETOUR, MV_ADJUST_POS,
     MV_EXPEDITION, MV_PERTE, MV_ADJUST_NEG,
@@ -66,7 +77,9 @@ bool inv_post_movement(int product_id, int location_id, int delta, MovementType 
 
 bool inv_transfer(int product_id, int from_location_id, int to_location_id,
                    int qty, const Session *session, char *err_out, size_t err_len);
-
+/* Movement history for one product, most recent first (joins the
+ * username in). Returns count written into `out`, up to max_results. */
+int inv_get_movements(int product_id, Movement *out, int max_results);
 /* ---- Fast in-memory lookups (O(1) hash, no DB round-trip) ---- */
 Product *inv_find_by_sku(const char *sku);
 Product *inv_find_by_barcode(const char *barcode);

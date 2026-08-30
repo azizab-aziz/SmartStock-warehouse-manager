@@ -279,7 +279,8 @@ static void draw_login_screen(WmsDb *db) {
 typedef enum { PANEL_NONE, PANEL_ADD_PRODUCT, PANEL_MOVEMENT,
                PANEL_EDIT_PRODUCT, PANEL_CONFIRM_DELETE_PRODUCT,
                PANEL_MANAGE_CATEGORIES, PANEL_CONFIRM_DELETE_CATEGORY,
-               PANEL_MANAGE_USERS, PANEL_RENAME_CATEGORY } ActivePanel;
+               PANEL_MANAGE_USERS, PANEL_RENAME_CATEGORY,
+               PANEL_MOVEMENT_HISTORY } ActivePanel;
 
 /* Small helper: a message that fades out after ~1.5s, per the spec
  * ("Messages de succes avec fade-out apres chaque action"). */
@@ -866,6 +867,10 @@ void gui_run(WmsDb *db) {
     bool edit_qty = false;
     int  movement_sign = 1; /* +1 in, -1 out */
 
+    /* Movement history panel state */
+    Movement mv_history[64];
+    int mv_history_count = 0;
+
     /* Edit-product form - reuses the same field pattern as add-product,
        plus the id/version of the product being edited (needed for
        inv_update_product's optimistic-lock check). */
@@ -1101,6 +1106,14 @@ void gui_run(WmsDb *db) {
             else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
         tx += 140 + btn_gap;
+
+        if (GuiButton((Rectangle){ tx, toolbar_y, 120, sh }, "Historique")) {
+            if (selected_product_id > 0) {
+                mv_history_count = inv_get_movements(selected_product_id, mv_history, 64);
+                panel = PANEL_MOVEMENT_HISTORY;
+            } else toast_show(&toast, "Selectionnez un produit d'abord", true);
+        }
+        tx += 120 + btn_gap;
 
         if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")&& !modal_active) {
             Product *p = find_product_by_id(all_products, total_products, selected_product_id);
@@ -1703,7 +1716,59 @@ void gui_run(WmsDb *db) {
                     }
                 }
             }
-            if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Annuler")) panel = PANEL_NONE;
+                       if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Annuler")) panel = PANEL_NONE;
+        }
+
+        /* ---- Movement history panel ---- */
+        if (panel == PANEL_MOVEMENT_HISTORY) {
+            int rows = mv_history_count > 12 ? 12 : mv_history_count;
+            float list_h = 28.0f * (rows > 0 ? rows : 1) + 110;
+            Rectangle box = { GetScreenWidth()/2 - 320, GetScreenHeight()/2 - list_h/2, 640, list_h };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            Product *hist_p = find_product_by_id(all_products, total_products, selected_product_id);
+            GuiPanel(box, TextFormat("Historique des mouvements - %s", hist_p ? hist_p->name : ""));
+
+            float bx = box.x + 20, by = box.y + 40;
+            AppText("Date/heure", bx, by, 12, DARKGRAY);
+            AppText("Qte", bx + 150, by, 12, DARKGRAY);
+            AppText("Type", bx + 220, by, 12, DARKGRAY);
+            AppText("Utilisateur", bx + 340, by, 12, DARKGRAY);
+            AppText("Reference / raison", bx + 460, by, 12, DARKGRAY);
+            by += 22;
+
+            if (mv_history_count == 0) {
+                AppText("Aucun mouvement enregistre pour ce produit.", bx, by, 13, COLOR_TEXT_MUTED);
+                by += 26;
+            }
+
+            for (int mi = 0; mi < rows; mi++) {
+                Movement *mv = &mv_history[mi];
+                AppText(mv->created_at, bx, by, 13, (Color){30,41,59,255});
+
+                char delta_buf[16];
+                snprintf(delta_buf, sizeof delta_buf, "%+d", mv->delta);
+                AppText(delta_buf, bx + 150, by, 13, mv->delta >= 0 ? COLOR_ACCENT_TEAL : COLOR_ACCENT_RED);
+
+                AppText(mv->type, bx + 220, by, 13, (Color){30,41,59,255});
+                AppText(mv->username[0] ? mv->username : "-", bx + 340, by, 13, COLOR_TEXT_MUTED);
+
+                const char *detail = mv->reason[0] ? mv->reason : mv->reference;
+                char detail_buf[40];
+                snprintf(detail_buf, sizeof detail_buf, "%.36s", detail);
+                AppText(detail_buf, bx + 460, by, 13, COLOR_TEXT_MUTED);
+
+                by += 24;
+            }
+
+            if (mv_history_count > rows) {
+                char more_buf[64];
+                snprintf(more_buf, sizeof more_buf, "+ %d mouvement(s) plus ancien(s) non affiches",
+                         mv_history_count - rows);
+                AppText(more_buf, bx, by, 12, COLOR_TEXT_MUTED);
+                by += 22;
+            }
+
+            if (GuiButton((Rectangle){ bx, box.y + box.height - 46, 130, 32 }, "Fermer")) panel = PANEL_NONE;
         }
 
         /* ---- toast ---- */

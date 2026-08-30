@@ -516,3 +516,35 @@ int inv_all_products(Product **out_array) {
     *out_array = g_products;
     return g_product_count;
 }
+
+int inv_get_movements(int product_id, Movement *out, int max_results) {
+    int count = 0;
+    sqlite3_stmt *st;
+    int rc = sqlite3_prepare_v2(g_db->handle,
+        "SELECT m.id, m.product_id, m.location_id, m.delta, m.type, "
+        "m.reference, m.user_id, COALESCE(u.username, ''), m.reason, m.created_at "
+        "FROM movements m LEFT JOIN users u ON u.id = m.user_id "
+        "WHERE m.product_id = ? ORDER BY m.created_at DESC, m.id DESC;",
+        -1, &st, NULL);
+    if (rc != SQLITE_OK) return 0;
+    sqlite3_bind_int(st, 1, product_id);
+
+    while (count < max_results && sqlite3_step(st) == SQLITE_ROW) {
+        Movement *mv = &out[count++];
+        memset(mv, 0, sizeof(*mv));
+        mv->id          = sqlite3_column_int(st, 0);
+        mv->product_id  = sqlite3_column_int(st, 1);
+        mv->location_id = sqlite3_column_int(st, 2);
+        mv->delta       = sqlite3_column_int(st, 3);
+        snprintf(mv->type, sizeof mv->type, "%s", (const char*)sqlite3_column_text(st, 4));
+        const unsigned char *ref = sqlite3_column_text(st, 5);
+        if (ref) snprintf(mv->reference, sizeof mv->reference, "%s", (const char*)ref);
+        mv->user_id = sqlite3_column_int(st, 6);
+        snprintf(mv->username, sizeof mv->username, "%s", (const char*)sqlite3_column_text(st, 7));
+        const unsigned char *reason = sqlite3_column_text(st, 8);
+        if (reason) snprintf(mv->reason, sizeof mv->reason, "%s", (const char*)reason);
+        snprintf(mv->created_at, sizeof mv->created_at, "%s", (const char*)sqlite3_column_text(st, 9));
+    }
+    sqlite3_finalize(st);
+    return count;
+}
