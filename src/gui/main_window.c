@@ -422,6 +422,78 @@ static bool ci_str_contains(const char *haystack, const char *needle) {
     return false;
 }
 
+/* True only if `s` is entirely digits, with at most one optional leading
+ * '-'. Rejects empty strings, "-" alone, and anything with letters -
+ * unlike atoi(), which silently returns 0 for garbage input. */
+static bool str_is_integer(const char *s) {
+    if (!s || !s[0]) return false;
+    int i = (s[0] == '-') ? 1 : 0;
+    if (!s[i]) return false;
+    for (; s[i]; i++) if (s[i] < '0' || s[i] > '9') return false;
+    return true;
+}
+
+/* Same idea for decimals: digits, at most one '.', optional leading '-'. */
+static bool str_is_decimal(const char *s) {
+    if (!s || !s[0]) return false;
+    int i = (s[0] == '-') ? 1 : 0;
+    if (!s[i]) return false;
+    bool seen_digit = false, seen_dot = false;
+    for (; s[i]; i++) {
+        if (s[i] == '.') {
+            if (seen_dot) return false;
+            seen_dot = true;
+        } else if (s[i] >= '0' && s[i] <= '9') {
+            seen_digit = true;
+        } else {
+            return false;
+        }
+    }
+    return seen_digit;
+}
+
+/* Shared validation for the add-product and edit-product forms.
+ * sku:     pass NULL to skip the SKU checks entirely (edit form has no
+ *          SKU field - it's immutable after creation).
+ * qty_str: pass NULL to skip (edit form has no initial-quantity field);
+ *          when non-NULL, empty string is allowed (blank = 0).
+ * Returns true if everything is valid; otherwise fills err_out. */
+static bool validate_product_fields(const char *sku, const char *name,
+                                     const char *price_str, const char *threshold_str,
+                                     const char *qty_str,
+                                     char *err_out, size_t err_len) {
+    if (sku && sku[0] == '\0') {
+        snprintf(err_out, err_len, "Le SKU est obligatoire"); return false;
+    }
+    if (!name || name[0] == '\0') {
+        snprintf(err_out, err_len, "Le nom est obligatoire"); return false;
+    }
+    if (!str_is_decimal(price_str)) {
+        snprintf(err_out, err_len, "Prix unitaire invalide"); return false;
+    }
+    if (atof(price_str) < 0) {
+        snprintf(err_out, err_len, "Le prix ne peut pas etre negatif"); return false;
+    }
+    if (!str_is_integer(threshold_str)) {
+        snprintf(err_out, err_len, "Seuil d'alerte invalide"); return false;
+    }
+    if (atoi(threshold_str) < 0) {
+        snprintf(err_out, err_len, "Le seuil d'alerte ne peut pas etre negatif"); return false;
+    }
+    if (qty_str && qty_str[0] != '\0') {
+        if (!str_is_integer(qty_str)) {
+            snprintf(err_out, err_len, "Quantite initiale invalide"); return false;
+        }
+        if (atoi(qty_str) < 0) {
+            snprintf(err_out, err_len, "La quantite initiale ne peut pas etre negative"); return false;
+        }
+    }
+    if (sku && sku[0] && inv_find_by_sku(sku) != NULL) {
+        snprintf(err_out, err_len, "Ce SKU existe deja"); return false;
+    }
+    return true;
+}
+
 static void draw_categories_screen(WmsDb *db, Category *all_categories, int *total_categories,
                                     char *cat_search, bool *cat_search_edit,
                                     int *cat_action_id, char *cat_rename_input, bool *cat_rename_edit,
@@ -1612,7 +1684,7 @@ void gui_run(WmsDb *db) {
                category row would otherwise ALSO register on whichever
                button happens to sit at that same pixel this frame. */
             if (!cat_dropdown_open) {
-                if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || addproduct_nav.submit) {
+                               if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || addproduct_nav.submit) {
                     Product np = {0};
                     snprintf(np.sku, sizeof np.sku, "%s", f_sku);
                     snprintf(np.name, sizeof np.name, "%s", f_name);
@@ -1623,8 +1695,9 @@ void gui_run(WmsDb *db) {
                     np.category_id = f_category_id;
 
                     char err[256];
-                    if (f_sku[0] == '\0' || f_name[0] == '\0') {
-                        toast_show(&toast, "SKU et nom sont obligatoires", true);
+                    if (!validate_product_fields(f_sku, f_name, f_price, f_threshold,
+                                                  f_initial_qty, err, sizeof err)) {
+                        toast_show(&toast, err, true);
                     } else if (inv_add_product(&np, err, sizeof err)) {
                         total_products = inv_all_products(&all_products);
                         inv_refresh_categories(db);
@@ -1786,7 +1859,10 @@ void gui_run(WmsDb *db) {
                     upd.alert_threshold = atoi(e_threshold);
 
                     char err[256];
-                    if (inv_update_product(&upd, err, sizeof err)) {
+                    if (!validate_product_fields(NULL, e_name, e_price, e_threshold,
+                                                  NULL, err, sizeof err)) {
+                        toast_show(&toast, err, true);
+                    } else if (inv_update_product(&upd, err, sizeof err)) {
                         total_products = inv_all_products(&all_products);
                         toast_show(&toast, "Produit modifie", false);
                         panel = PANEL_NONE;
@@ -2004,12 +2080,12 @@ void gui_run(WmsDb *db) {
                 if (edit_reason) edit_qty = false;
             }
 
-            by += 50;
+                       by += 50;
             if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Valider") || movement_nav.submit) {
-                int qty = atoi(m_qty);
-                if (qty <= 0) {
-                    toast_show(&toast, "Quantite invalide", true);
+                if (!str_is_integer(m_qty) || atoi(m_qty) <= 0) {
+                    toast_show(&toast, "Quantite invalide (nombre entier positif requis)", true);
                 } else {
+                    int qty = atoi(m_qty);
                     /* NOTE: location_id=1 placeholder - a real build wires
                        this to a location picker; the atomic-update logic
                        itself (inv_post_movement) is what matters here. */
