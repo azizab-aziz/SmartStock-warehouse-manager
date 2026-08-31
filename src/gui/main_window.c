@@ -90,9 +90,20 @@ static NavResult nav_handle_focus(bool **edit_flags, int count) {
         return r;
     }
 
-    r.submit = (current == count - 1) && IsKeyPressed(KEY_ENTER);
+        r.submit = (current == count - 1) && IsKeyPressed(KEY_ENTER);
     return r;
 
+}
+
+/* Wraps a left-flowing button row to a new line if the next button of
+ * `width` wouldn't fit in the current window - keeps every button
+ * reachable at any window size instead of running off the right edge.
+ * Shared by the categories-screen toolbar and the main product toolbar. */
+static void toolbar_wrap(int *tx, int *toolbar_y, int width, int sx, int sh) {
+    if (*tx + width > GetScreenWidth() - 20) {
+        *tx = sx;
+        *toolbar_y += sh + 10;
+    }
 }
 
 static void draw_splash_screen(void) {
@@ -312,13 +323,73 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
         return;
     }
 
-    char cmd[700];
-    snprintf(cmd, sizeof cmd, "python \"%s\" \"%s\" \"%s\" \"%s\"",
+    /* Redirect the python script's own stdout/stderr to a log file, since
+       this app has no console - "type exports\export_log.txt" afterwards
+       shows exactly why it failed (missing python, missing script,
+       openpyxl install error, etc). */
+    char cmd[900];
+    snprintf(cmd, sizeof cmd,
+             "python \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\export_log.txt\" 2>&1",
              EXPORT_PY_SCRIPT, EXPORT_CSV_PATH, EXPORT_XLSX_PATH, sheet_name);
     int rc = system(cmd);
 
-    if (rc == 0) toast_show(toast, "Rapport Excel genere (exports/rapport_stock.xlsx)", false);
-    else toast_show(toast, "Erreur lors de la generation du rapport Excel", true);
+    FILE *dbg = fopen("exports/export_debug.txt", "w");
+    if (dbg) {
+        fprintf(dbg, "command: %s\n", cmd);
+        fprintf(dbg, "system() return code: %d\n", rc);
+        fclose(dbg);
+    }
+
+       if (rc == 0) toast_show(toast, "Rapport Excel genere (exports/rapport_stock.xlsx)", false);
+    else toast_show(toast, "Erreur - voir exports/export_log.txt", true);
+}
+
+#define EXPORT_INFO_CSV_PATH "exports/fiche_info.csv"
+#define EXPORT_MOV_CSV_PATH  "exports/fiche_mouvements.csv"
+#define EXPORT_PDF_SCRIPT    "python_scripts/product_sheet.py"
+
+/* Writes the two CSVs (product info + movement history), shells out to
+ * the Python/reportlab script, and reports success/failure via toast. */
+static void run_product_sheet_export(Product *p, Toast *toast) {
+    if (!p) {
+        toast_show(toast, "Selectionnez un produit d'abord", true);
+        return;
+    }
+    _mkdir("exports");
+
+    char err[256];
+    if (!inv_export_product_info_csv(p->id, EXPORT_INFO_CSV_PATH, err, sizeof err)) {
+        toast_show(toast, err, true);
+        return;
+    }
+    if (!inv_export_movements_csv(p->id, EXPORT_MOV_CSV_PATH, 200, err, sizeof err)) {
+        toast_show(toast, err, true);
+        return;
+    }
+
+    char pdf_path[128];
+    snprintf(pdf_path, sizeof pdf_path, "exports/fiche_%s.pdf", p->sku);
+
+    char cmd[900];
+    snprintf(cmd, sizeof cmd,
+             "python \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\sheet_log.txt\" 2>&1",
+             EXPORT_PDF_SCRIPT, EXPORT_INFO_CSV_PATH, EXPORT_MOV_CSV_PATH, pdf_path);
+    int rc = system(cmd);
+
+    FILE *dbg = fopen("exports/sheet_debug.txt", "w");
+    if (dbg) {
+        fprintf(dbg, "command: %s\n", cmd);
+        fprintf(dbg, "system() return code: %d\n", rc);
+        fclose(dbg);
+    }
+
+    if (rc == 0) {
+        char msg[160];
+        snprintf(msg, sizeof msg, "Fiche PDF generee (%s)", pdf_path);
+        toast_show(toast, msg, false);
+    } else {
+        toast_show(toast, "Erreur - voir exports/sheet_log.txt", true);
+    }
 }
 
 /* Finds a product by its stable database id, searching the full in-memory
@@ -381,7 +452,7 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
 
     bool modal_active = (*cat_screen_panel != PANEL_NONE);
 
-    /* Search bar */
+       /* Search bar */
     int sx = 20, sy = 94, sw = 400, sh = 32;
     if (GuiTextBox((Rectangle){ sx, sy, sw, sh }, cat_search, 128, *cat_search_edit) && !modal_active)
         *cat_search_edit = !*cat_search_edit;
@@ -394,34 +465,45 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     if (GuiTextBox((Rectangle){ gsx, gsy, sw, sh }, global_search, 128, *global_search_edit) && !modal_active)
         *global_search_edit = !*global_search_edit;
 
+    /* Action buttons - own row below both search boxes, wrapping to a
+       second row instead of overlapping the search bars or each other
+       when the window is narrower than the full toolbar width. */
+    int cat_toolbar_y = gsy + sh + 22;
+    int cat_tx = sx;
+    int cat_btn_gap = 10;
+
     if (session_can(&g_session, "user.manage")) {
-        if (GuiButton((Rectangle){ GetScreenWidth() - 190, sy, 170, sh }, "Gerer utilisateurs") && !modal_active) {
+        toolbar_wrap(&cat_tx, &cat_toolbar_y, 170, sx, sh);
+        if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 170, sh }, "Gerer utilisateurs") && !modal_active) {
             *cat_screen_panel = PANEL_MANAGE_USERS;
         }
+        cat_tx += 170 + cat_btn_gap;
     }
 
-    int add_btn_x = sx + sw + 10;
-    if (GuiButton((Rectangle){ add_btn_x, sy, 190, sh }, "+ Ajouter categorie") && !modal_active) {
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 190, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 190, sh }, "+ Ajouter categorie") && !modal_active) {
         *cat_screen_panel = PANEL_ADD_PRODUCT; /* reused as a generic "add category" dialog trigger below */
         cat_rename_input[0] = '\0';
         *cat_rename_edit = true;
         *cat_renaming = false;
         *cat_action_id = 0;
     }
+    cat_tx += 190 + cat_btn_gap;
 
-    int stats_btn_x = add_btn_x + 190 + 10;
-    if (GuiButton((Rectangle){ stats_btn_x, sy, 150, sh }, "Statistiques") && !modal_active) {
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Statistiques") && !modal_active) {
         g_screen = SCREEN_STATS;
     }
+    cat_tx += 150 + cat_btn_gap;
 
-    int export_btn_x = stats_btn_x + 150 + 10;
-    if (GuiButton((Rectangle){ export_btn_x, sy, 150, sh }, "Exporter Excel") && !modal_active) {
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Exporter Excel") && !modal_active) {
         run_excel_export(0, "Tout le stock", toast);
     }
 
     /* Alphabetical list (already sorted by db_list_categories via
        ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
-    int row_y = 220; /* pushed down to make room for the new search box */
+    int row_y = cat_toolbar_y + sh + 30; /* dynamic - accounts for the toolbar wrapping to 2 rows */
     int shown = 0;
 
     /* If a global product search is active, show matching products
@@ -809,17 +891,6 @@ static void AppTextBold(const char *text, int x, int y, int size, Color color) {
     DrawTextEx(g_appFontBold, text, (Vector2){ (float)x, (float)y }, (float)size, 1.0f, color);
 }
 
-/* Wraps the toolbar to a new row if the next button of `width` wouldn't
- * fit in the current window - keeps every button reachable at any window
- * size instead of running off the right edge. */
-static void toolbar_wrap(int *tx, int *toolbar_y, int width, int sx, int sh) {
-    if (*tx + width > GetScreenWidth() - 20) {
-        *tx = sx;
-        *toolbar_y += sh + 10;
-    }
-}
-
-
 void gui_run(WmsDb *db) {
         InitWindow(SCREEN_W, SCREEN_H, "Gestion de Stock - Warehouse WMS");
     SetWindowState(FLAG_WINDOW_RESIZABLE);
@@ -1199,11 +1270,18 @@ void gui_run(WmsDb *db) {
         }
         tx += 130 + btn_gap;
 
-        toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
+               toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Exporter Excel") && !modal_active) {
             run_excel_export(g_active_category_id, g_active_category_name, &toast);
         }
         tx += 140 + btn_gap;
+
+        toolbar_wrap(&tx, &toolbar_y, 110, sx, sh);
+        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Fiche PDF") && !modal_active) {
+            Product *p = find_product_by_id(all_products, total_products, selected_product_id);
+            run_product_sheet_export(p, &toast);
+        }
+        tx += 110 + btn_gap;
 
         if (session_can(&g_session, "user.manage")) {
             toolbar_wrap(&tx, &toolbar_y, 160, sx, sh);

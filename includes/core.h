@@ -103,4 +103,11 @@ bool inv_delete_category(int category_id, const Session *session,
  * Columns: PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,
  *          Valeur_Stock,Seuil_Alerte,Statut */
 bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err_len);
+/* Single-product CSV (same columns as inv_export_csv) - feeds the PDF
+ * product sheet's info panel. Returns false if the product id isn't found. */
+bool inv_export_product_info_csv(int product_id, const char *path, char *err_out, size_t err_len);
+/* Movement history for one product, written as CSV (Date,Qte,Type,
+ * Reference,Utilisateur,Raison) - feeds the PDF sheet's history table. */
+bool inv_export_movements_csv(int product_id, const char *path, int max_results,
+                               char *err_out, size_t err_len);
 #endif

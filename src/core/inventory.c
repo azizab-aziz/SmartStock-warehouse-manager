@@ -535,14 +535,18 @@ static void csv_write_field(FILE *f, const char *text) {
 }
 
 bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err_len) {
-    FILE *f = fopen(path, "w");
+    FILE *f = fopen(path, "wb"); /* binary mode - we're writing raw UTF-8 bytes, not text-mode-translated */
     if (!f) {
         set_err(err_out, err_len, "Impossible de creer le fichier CSV (dossier manquant ?)");
         return false;
     }
 
-    fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\n");
+    /* UTF-8 BOM - without this, Excel guesses the system codepage instead
+       of UTF-8 and accented characters (é, è, etc.) render as garbage.
+       The Python script's utf-8-sig reader already strips this correctly. */
+    fputc(0xEF, f); fputc(0xBB, f); fputc(0xBF, f);
 
+    fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\r\n");
     for (int i = 0; i < g_product_count; i++) {
         Product *p = &g_products[i];
         if (category_id > 0 && p->category_id != category_id) continue;
@@ -555,11 +559,81 @@ bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err
         csv_write_field(f, p->name); fputc(',', f);
         csv_write_field(f, p->category); fputc(',', f);
         csv_write_field(f, p->unit); fputc(',', f);
-        fprintf(f, "%d,%.2f,%.2f,%d,%s\n",
+                fprintf(f, "%d,%.2f,%.2f,%d,%s\r\n",
                 p->total_quantity, p->unit_price, stock_value, p->alert_threshold, statut);
     }
 
     fclose(f);
+    return true;
+}
+
+static Product *find_product_internal(int product_id) {
+    for (int i = 0; i < g_product_count; i++)
+        if (g_products[i].id == product_id) return &g_products[i];
+    return NULL;
+}
+
+bool inv_export_product_info_csv(int product_id, const char *path, char *err_out, size_t err_len) {
+    Product *p = find_product_internal(product_id);
+    if (!p) {
+        set_err(err_out, err_len, "Produit introuvable");
+        return false;
+    }
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        set_err(err_out, err_len, "Impossible de creer le fichier CSV (dossier manquant ?)");
+        return false;
+    }
+    fputc(0xEF, f); fputc(0xBB, f); fputc(0xBF, f);
+    fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\r\n");
+
+    double stock_value = (double)p->total_quantity * p->unit_price;
+    const char *statut = (p->total_quantity <= p->alert_threshold) ? "STOCK FAIBLE" : "OK";
+
+    csv_write_field(f, p->prd_number); fputc(',', f);
+    csv_write_field(f, p->sku); fputc(',', f);
+    csv_write_field(f, p->name); fputc(',', f);
+    csv_write_field(f, p->category); fputc(',', f);
+    csv_write_field(f, p->unit); fputc(',', f);
+    fprintf(f, "%d,%.2f,%.2f,%d,%s\r\n",
+            p->total_quantity, p->unit_price, stock_value, p->alert_threshold, statut);
+
+    fclose(f);
+    return true;
+}
+
+bool inv_export_movements_csv(int product_id, const char *path, int max_results,
+                               char *err_out, size_t err_len) {
+    Movement *movs = malloc(sizeof(Movement) * (size_t)max_results);
+    if (!movs) {
+        set_err(err_out, err_len, "Memoire insuffisante");
+        return false;
+    }
+    int count = inv_get_movements(product_id, movs, max_results);
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        free(movs);
+        set_err(err_out, err_len, "Impossible de creer le fichier CSV (dossier manquant ?)");
+        return false;
+    }
+    fputc(0xEF, f); fputc(0xBB, f); fputc(0xBF, f);
+    fprintf(f, "Date,Qte,Type,Reference,Utilisateur,Raison\r\n");
+
+    for (int i = 0; i < count; i++) {
+        Movement *mv = &movs[i];
+        csv_write_field(f, mv->created_at); fputc(',', f);
+        fprintf(f, "%+d,", mv->delta);
+        csv_write_field(f, mv->type); fputc(',', f);
+        csv_write_field(f, mv->reference); fputc(',', f);
+        csv_write_field(f, mv->username[0] ? mv->username : "-"); fputc(',', f);
+        csv_write_field(f, mv->reason);
+        fprintf(f, "\r\n");
+    }
+
+    fclose(f);
+    free(movs);
     return true;
 }
 
