@@ -26,7 +26,7 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -500,6 +500,12 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Journal d'audit") && !modal_active) {
         g_screen = SCREEN_AUDIT_LOG;
     }
+    cat_tx += 150 + cat_btn_gap;
+
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 170, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 170, sh }, "Produits archives") && !modal_active) {
+        g_screen = SCREEN_ARCHIVED_PRODUCTS;
+    }
 
     /* Alphabetical list (already sorted by db_list_categories via
        ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
@@ -958,8 +964,70 @@ static void draw_audit_log_screen(void) {
     char page_label[32];
     snprintf(page_label, sizeof page_label, "Page %d / %d", audit_page + 1, page_count > 0 ? page_count : 1);
     DrawText(page_label, table_x, pag_y + 6, 14, DARKGRAY);
-    if (GuiButton((Rectangle){ table_x + 140, pag_y, 70, 30 }, "< Prec") && audit_page > 0) audit_page--;
+        if (GuiButton((Rectangle){ table_x + 140, pag_y, 70, 30 }, "< Prec") && audit_page > 0) audit_page--;
     if (GuiButton((Rectangle){ table_x + 220, pag_y, 70, 30 }, "Suiv >") && audit_page + 1 < page_count) audit_page++;
+}
+
+/* Archived (soft-deleted) products - viewable and restorable, so nothing
+ * is ever truly gone. Fetched fresh each frame, same style as the stats
+ * screens. Restoring re-adds it to the active in-memory index, so the
+ * caller's total_products must be refreshed afterward. */
+static void draw_archived_products_screen(Product **all_products_ptr, int *total_products_ptr, Toast *toast) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Produits archives", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    Product *archived;
+    int archived_count = inv_get_archived_products(&archived);
+
+    char summary[96];
+    snprintf(summary, sizeof summary, "%d produit(s) archive(s)", archived_count);
+    AppText(summary, 20, 90, 14, COLOR_TEXT_MUTED);
+
+    int sx = 20, row_y = 130;
+    if (archived_count == 0) {
+        AppText("Aucun produit archive pour le moment.", sx, row_y, 14, COLOR_TEXT_MUTED);
+    }
+
+    for (int i = 0; i < archived_count; i++) {
+        Product *p = &archived[i];
+        Rectangle row_rect = { sx, row_y - 4, GetScreenWidth() - 2*sx, 44 };
+        bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect);
+        if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+        DrawLine((int)row_rect.x, row_y + 40, (int)(row_rect.x + row_rect.width), row_y + 40, COLOR_BORDER);
+
+        AppTextBold(p->name, sx + 8, row_y + 4, 15, (Color){30,41,59,255});
+        char sub[160];
+        snprintf(sub, sizeof sub, "%s | ancienne categorie: %s", p->sku, p->category[0] ? p->category : "-");
+        AppText(sub, sx + 8, row_y + 24, 12, COLOR_TEXT_MUTED);
+
+        Rectangle restore_btn = { GetScreenWidth() - sx - 130, row_y + 6, 130, 30 };
+        bool restore_hover = CheckCollisionPointRec(GetMousePosition(), restore_btn);
+        DrawRectangleRounded(restore_btn, 0.2f, 4, restore_hover ? (Color){13,148,105,255} : COLOR_ACCENT_TEAL);
+        Vector2 rt = MeasureTextEx(g_appFont, "Restaurer", 14, 1);
+        AppText("Restaurer", restore_btn.x + restore_btn.width/2 - rt.x/2, restore_btn.y + 7, 14, WHITE);
+        if (restore_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            char err[256];
+            if (inv_restore_product(p->id, err, sizeof err)) {
+                *total_products_ptr = inv_all_products(all_products_ptr);
+                toast_show(toast, "Produit restaure - assignez-lui une categorie via Modifier", false);
+            } else {
+                toast_show(toast, err, true);
+            }
+        }
+
+        row_y += 48;
+    }
 }
 
 
@@ -1159,10 +1227,18 @@ void gui_run(WmsDb *db) {
             continue;
         }
 
-        /* ---- audit log screen (every movement, every product) ---- */
+                /* ---- audit log screen (every movement, every product) ---- */
         if (g_screen == SCREEN_AUDIT_LOG) {
             BeginDrawing();
             draw_audit_log_screen();
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- archived products screen ---- */
+        if (g_screen == SCREEN_ARCHIVED_PRODUCTS) {
+            BeginDrawing();
+            draw_archived_products_screen(&all_products, &total_products, &toast);
             EndDrawing();
             continue;
         }
@@ -1336,10 +1412,10 @@ void gui_run(WmsDb *db) {
                 ee_name = true; ee_price = ee_threshold = false;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-        tx += 100 + btn_gap;
+            tx += 110 + btn_gap;
 
-        toolbar_wrap(&tx, &toolbar_y, 110, sx, sh);
-        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Supprimer")) {
+        toolbar_wrap(&tx, &toolbar_y, 100, sx, sh);
+        if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Archiver")) {
             Product *p = find_product_by_id(all_products, total_products, selected_product_id);
             if (p) {
                 edit_product_id = p->id;
@@ -1742,23 +1818,23 @@ void gui_run(WmsDb *db) {
             }
         }
 
-        /* ---- Confirm delete product ---- */
+               /* ---- Confirm archive product ---- */
         if (panel == PANEL_CONFIRM_DELETE_PRODUCT) {
             Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 90, 400, 180 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
-            GuiPanel(box, "Confirmer la suppression");
+            GuiPanel(box, "Confirmer l'archivage");
 
             float bx = box.x + 20, by = box.y + 40;
-            AppText("Voulez-vous vraiment supprimer ce produit ?", bx, by, 14, (Color){30,41,59,255});
-            AppText("Cette action est irreversible.", bx, by + 22, 13, COLOR_TEXT_MUTED);
+            AppText("Voulez-vous archiver ce produit ?", bx, by, 14, (Color){30,41,59,255});
+            AppText("Il restera consultable et restaurable depuis \"Produits archives\".", bx, by + 22, 13, COLOR_TEXT_MUTED);
 
             by += 60;
-            if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, supprimer")) {
+            if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, archiver")) {
                 char err[256];
                 if (inv_delete_product(edit_product_id, &g_session, err, sizeof err)) {
                     total_products = inv_all_products(&all_products);
                     selected_product_id = -1;
-                    toast_show(&toast, "Produit supprime", false);
+                    toast_show(&toast, "Produit archive", false);
                 } else {
                     toast_show(&toast, err, true); /* e.g. "stock restant non nul" */
                 }

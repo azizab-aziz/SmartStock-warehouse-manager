@@ -102,6 +102,14 @@ void inv_refresh_categories(WmsDb *db);
  * safety). On refusal, err_out lists how many products are still linked. */
 bool inv_delete_category(int category_id, const Session *session,
                           char *err_out, size_t err_len);
+/* Archive view: every inactive (soft-deleted) product, alphabetical.
+ * *out points at internal storage - do not free. */
+int inv_get_archived_products(Product **out);
+/* Re-activates an archived product. category_id stays NULL (it was
+ * cleared on archive) - the old category NAME is preserved in p->category
+ * for display, but the product shows as "Sans categorie" until someone
+ * uses Modifier to reassign it. */
+bool inv_restore_product(int product_id, char *err_out, size_t err_len);
 /* Writes active products to a CSV for the Excel-export pipeline.
  * category_id <= 0 exports every category; otherwise only that one.
  * Columns: PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,

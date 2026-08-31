@@ -15,6 +15,9 @@ static Category g_categories[WMS_MAX_CATEGORIES];
 static int       g_category_count = 0;
 static HashTable   g_by_sku;
 static HashTable   g_by_barcode;
+#define WMS_MAX_ARCHIVED 4096
+static Product g_archived[WMS_MAX_ARCHIVED];
+static int     g_archived_count = 0;
 
 static const char *movement_type_str(MovementType t) {
     switch (t) {
@@ -697,8 +700,103 @@ int inv_get_all_movements(Movement *out, int max_results) {
         const unsigned char *reason = sqlite3_column_text(st, 8);
         if (reason) snprintf(mv->reason, sizeof mv->reason, "%s", (const char*)reason);
         snprintf(mv->created_at, sizeof mv->created_at, "%s", (const char*)sqlite3_column_text(st, 9));
-        snprintf(mv->product_name, sizeof mv->product_name, "%s", (const char*)sqlite3_column_text(st, 10));
+               snprintf(mv->product_name, sizeof mv->product_name, "%s", (const char*)sqlite3_column_text(st, 10));
     }
     sqlite3_finalize(st);
     return count;
+}
+
+int inv_get_archived_products(Product **out) {
+    g_archived_count = 0;
+    sqlite3_stmt *st;
+    int rc = sqlite3_prepare_v2(g_db->handle,
+        "SELECT id, prd_number, sku, barcode, name, category, unit, "
+        "unit_price, alert_threshold, supplier_id, photo_path, version, category_id "
+        "FROM products WHERE active = 0 ORDER BY name COLLATE NOCASE;", -1, &st, NULL);
+    if (rc == SQLITE_OK) {
+        while (sqlite3_step(st) == SQLITE_ROW && g_archived_count < WMS_MAX_ARCHIVED) {
+            Product *p = &g_archived[g_archived_count++];
+            memset(p, 0, sizeof(*p));
+            p->id = sqlite3_column_int(st, 0);
+            snprintf(p->prd_number, sizeof p->prd_number, "%s", sqlite3_column_text(st, 1) ? (const char*)sqlite3_column_text(st, 1) : "");
+            snprintf(p->sku, sizeof p->sku, "%s", (const char*)sqlite3_column_text(st, 2));
+            const unsigned char *bc = sqlite3_column_text(st, 3);
+            if (bc) snprintf(p->barcode, sizeof p->barcode, "%s", (const char*)bc);
+            snprintf(p->name, sizeof p->name, "%s", (const char*)sqlite3_column_text(st, 4));
+            const unsigned char *cat = sqlite3_column_text(st, 5);
+            if (cat) snprintf(p->category, sizeof p->category, "%s", (const char*)cat); /* old name, kept for context */
+            snprintf(p->unit, sizeof p->unit, "%s", (const char*)sqlite3_column_text(st, 6));
+            p->unit_price      = sqlite3_column_double(st, 7);
+            p->alert_threshold = sqlite3_column_int(st, 8);
+            p->supplier_id     = sqlite3_column_int(st, 9);
+            const unsigned char *ph = sqlite3_column_text(st, 10);
+            if (ph) snprintf(p->photo_path, sizeof p->photo_path, "%s", (const char*)ph);
+            p->version     = sqlite3_column_int(st, 11);
+            p->category_id = sqlite3_column_int(st, 12); /* 0 - was cleared on archive */
+            p->total_quantity = 0; /* stock rows are cleared on archive - always 0 */
+        }
+    }
+    sqlite3_finalize(st);
+    *out = g_archived;
+    return g_archived_count;
+}
+
+bool inv_restore_product(int product_id, char *err_out, size_t err_len) {
+    if (!db_begin_immediate_retry(g_db, 8)) {
+        set_err(err_out, err_len, "Verrou d'ecriture indisponible");
+        return false;
+    }
+
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(g_db->handle, "UPDATE products SET active = 1 WHERE id = ?;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, product_id);
+    int rc = sqlite3_step(st);
+    sqlite3_finalize(st);
+
+    if (rc != SQLITE_DONE) {
+        set_err(err_out, err_len, sqlite3_errmsg(g_db->handle));
+        db_rollback(g_db);
+        return false;
+    }
+    if (sqlite3_changes(g_db->handle) == 0) {
+        set_err(err_out, err_len, "Produit introuvable");
+        db_rollback(g_db);
+        return false;
+    }
+    db_commit(g_db);
+
+    /* Pull the now-active row back into the in-memory index, same
+       column layout as inv_init()'s load query. */
+    if (g_product_count < WMS_MAX_PRODUCTS) {
+        sqlite3_stmt *st2;
+        sqlite3_prepare_v2(g_db->handle,
+            "SELECT id, prd_number, sku, barcode, name, category, unit, "
+            "unit_price, alert_threshold, supplier_id, photo_path, version, category_id "
+            "FROM products WHERE id = ?;", -1, &st2, NULL);
+        sqlite3_bind_int(st2, 1, product_id);
+        if (sqlite3_step(st2) == SQLITE_ROW) {
+            Product *p = &g_products[g_product_count++];
+            memset(p, 0, sizeof(*p));
+            p->id = sqlite3_column_int(st2, 0);
+            snprintf(p->prd_number, sizeof p->prd_number, "%s", sqlite3_column_text(st2, 1) ? (const char*)sqlite3_column_text(st2, 1) : "");
+            snprintf(p->sku, sizeof p->sku, "%s", (const char*)sqlite3_column_text(st2, 2));
+            const unsigned char *bc = sqlite3_column_text(st2, 3);
+            if (bc) snprintf(p->barcode, sizeof p->barcode, "%s", (const char*)bc);
+            snprintf(p->name, sizeof p->name, "%s", (const char*)sqlite3_column_text(st2, 4));
+            const unsigned char *cat = sqlite3_column_text(st2, 5);
+            if (cat) snprintf(p->category, sizeof p->category, "%s", (const char*)cat);
+            snprintf(p->unit, sizeof p->unit, "%s", (const char*)sqlite3_column_text(st2, 6));
+            p->unit_price      = sqlite3_column_double(st2, 7);
+            p->alert_threshold = sqlite3_column_int(st2, 8);
+            p->supplier_id     = sqlite3_column_int(st2, 9);
+            const unsigned char *ph = sqlite3_column_text(st2, 10);
+            if (ph) snprintf(p->photo_path, sizeof p->photo_path, "%s", (const char*)ph);
+            p->version     = sqlite3_column_int(st2, 11);
+            p->category_id = sqlite3_column_int(st2, 12); /* 0 - restored as "Sans categorie" */
+            index_product(p);
+        }
+        sqlite3_finalize(st2);
+    }
+    refresh_product_total(product_id);
+    return true;
 }
