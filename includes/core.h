@@ -38,6 +38,7 @@ typedef struct {
 typedef struct {
     int    id;
     int    product_id;
+    char   product_name[128]; /* only filled by inv_get_all_movements() - "Produit supprime" if gone */
     int    location_id;
     int    delta;         /* positive = in, negative = out */
     char   type[24];       /* "reception", "expedition", etc. - see movement_type_str() */
@@ -80,6 +81,9 @@ bool inv_transfer(int product_id, int from_location_id, int to_location_id,
 /* Movement history for one product, most recent first (joins the
  * username in). Returns count written into `out`, up to max_results. */
 int inv_get_movements(int product_id, Movement *out, int max_results);
+/* Every movement across every product, most recent first, product name
+ * joined in - the full audit trail (not scoped to one product). */
+int inv_get_all_movements(Movement *out, int max_results);
 /* ---- Fast in-memory lookups (O(1) hash, no DB round-trip) ---- */
 Product *inv_find_by_sku(const char *sku);
 Product *inv_find_by_barcode(const char *barcode);

@@ -26,7 +26,7 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -491,14 +491,14 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     cat_tx += 190 + cat_btn_gap;
 
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
-    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Statistiques") && !modal_active) {
-        g_screen = SCREEN_STATS;
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Exporter Excel") && !modal_active) {
+        run_excel_export(0, "Tout le stock", toast);
     }
     cat_tx += 150 + cat_btn_gap;
 
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
-    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Exporter Excel") && !modal_active) {
-        run_excel_export(0, "Tout le stock", toast);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Journal d'audit") && !modal_active) {
+        g_screen = SCREEN_AUDIT_LOG;
     }
 
     /* Alphabetical list (already sorted by db_list_categories via
@@ -876,10 +876,90 @@ static void draw_category_stats_screen(Product *all_products, int total_products
     Rectangle left_area  = { 20, chart_top, chart_w, chart_h };
     Rectangle right_area = { 20 + chart_w + gap, chart_top, chart_w, chart_h };
 
-    draw_hbar_chart("Quantite par produit", left_area, labels, qty_vals, count,
+        draw_hbar_chart("Quantite par produit", left_area, labels, qty_vals, count,
                      COLOR_ACCENT_BLUE, false, "Aucun produit dans cette categorie.");
     draw_hbar_chart("Valeur du stock par produit", right_area, labels, stock_vals, count,
                      COLOR_ACCENT_TEAL, true, "Aucun produit dans cette categorie.");
+}
+
+/* Full audit trail: every stock movement across every product, most
+ * recent first, paginated. Refetched fresh each frame - same "recompute
+ * every draw" style already used by draw_stats_screen. */
+static void draw_audit_log_screen(void) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Journal d'audit - tous les mouvements de stock", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    static Movement audit_log[500];
+    static int audit_page = 0;
+    int audit_count = inv_get_all_movements(audit_log, 500);
+
+    char summary[96];
+    snprintf(summary, sizeof summary, "%d mouvement(s) enregistre(s)", audit_count);
+    AppText(summary, 20, 90, 14, COLOR_TEXT_MUTED);
+
+    int table_x = 20, ty = 120;
+    int col_date = table_x, col_product = table_x + 150, col_qty = table_x + 380,
+        col_type = table_x + 450, col_user = table_x + 580, col_reason = table_x + 700;
+    AppText("Date/heure", col_date, ty, 13, DARKGRAY);
+    AppText("Produit", col_product, ty, 13, DARKGRAY);
+    AppText("Qte", col_qty, ty, 13, DARKGRAY);
+    AppText("Type", col_type, ty, 13, DARKGRAY);
+    AppText("Utilisateur", col_user, ty, 13, DARKGRAY);
+    AppText("Raison / reference", col_reason, ty, 13, DARKGRAY);
+
+    int row_y = ty + 28;
+    int AUDIT_PAGE_SIZE = 16;
+    int page_count = (audit_count + AUDIT_PAGE_SIZE - 1) / AUDIT_PAGE_SIZE;
+    if (audit_page >= page_count) audit_page = page_count > 0 ? page_count - 1 : 0;
+    int start = audit_page * AUDIT_PAGE_SIZE;
+    int shown = 0;
+
+    if (audit_count == 0) {
+        AppText("Aucun mouvement enregistre pour le moment.", table_x, row_y, 14, COLOR_TEXT_MUTED);
+    }
+
+    for (int i = start; i < audit_count && shown < AUDIT_PAGE_SIZE; i++, shown++) {
+        Movement *mv = &audit_log[i];
+        AppText(mv->created_at, col_date, row_y, 13, (Color){30,41,59,255});
+
+        int prod_max_w = col_qty - col_product - 10;
+        BeginScissorMode(col_product, row_y - 2, prod_max_w, 18);
+        AppText(mv->product_name, col_product, row_y, 13, (Color){30,41,59,255});
+        EndScissorMode();
+
+        char delta_buf[16];
+        snprintf(delta_buf, sizeof delta_buf, "%+d", mv->delta);
+        AppText(delta_buf, col_qty, row_y, 13, mv->delta >= 0 ? COLOR_ACCENT_TEAL : COLOR_ACCENT_RED);
+
+        AppText(mv->type, col_type, row_y, 13, (Color){30,41,59,255});
+        AppText(mv->username[0] ? mv->username : "-", col_user, row_y, 13, COLOR_TEXT_MUTED);
+
+        const char *detail = mv->reason[0] ? mv->reason : mv->reference;
+        int reason_max_w = GetScreenWidth() - col_reason - 20;
+        BeginScissorMode(col_reason, row_y - 2, reason_max_w, 18);
+        AppText(detail, col_reason, row_y, 13, COLOR_TEXT_MUTED);
+        EndScissorMode();
+
+        row_y += 26;
+    }
+
+    int pag_y = GetScreenHeight() - 60;
+    char page_label[32];
+    snprintf(page_label, sizeof page_label, "Page %d / %d", audit_page + 1, page_count > 0 ? page_count : 1);
+    DrawText(page_label, table_x, pag_y + 6, 14, DARKGRAY);
+    if (GuiButton((Rectangle){ table_x + 140, pag_y, 70, 30 }, "< Prec") && audit_page > 0) audit_page--;
+    if (GuiButton((Rectangle){ table_x + 220, pag_y, 70, 30 }, "Suiv >") && audit_page + 1 < page_count) audit_page++;
 }
 
 
@@ -976,7 +1056,9 @@ void gui_run(WmsDb *db) {
 
     /* Movement form fields */
     char m_qty[16] = {0};
+    char m_reason[128] = {0};
     bool edit_qty = false;
+    bool edit_reason = false;
     int  movement_sign = 1; /* +1 in, -1 out */
 
     /* Movement history panel state */
@@ -1073,6 +1155,14 @@ void gui_run(WmsDb *db) {
         if (g_screen == SCREEN_CATEGORY_STATS) {
             BeginDrawing();
             draw_category_stats_screen(all_products, total_products);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- audit log screen (every movement, every product) ---- */
+        if (g_screen == SCREEN_AUDIT_LOG) {
+            BeginDrawing();
+            draw_audit_log_screen();
             EndDrawing();
             continue;
         }
@@ -1217,7 +1307,7 @@ void gui_run(WmsDb *db) {
 
         toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")) {
-            if (selected_product_id > 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; }
+            if (selected_product_id > 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; m_reason[0] = '\0'; }
             else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
                 tx += 140 + btn_gap;
@@ -1807,7 +1897,7 @@ void gui_run(WmsDb *db) {
         Product *movement_product = find_product_by_id(all_products, total_products, selected_product_id);
         if (panel == PANEL_MOVEMENT && movement_product != NULL) {
             Product *p = movement_product;
-            Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 140, 400, 260 };
+                       Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 165, 400, 320 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, TextFormat("Mouvement - %s", p->name));
 
@@ -1820,14 +1910,23 @@ void gui_run(WmsDb *db) {
             if (GuiButton((Rectangle){ bx + 100, by, 90, 30 }, movement_sign < 0 ? "[Sortie]" : "Sortie"))
                 movement_sign = -1;
 
-                        if (!edit_qty) edit_qty = true; /* only one field - always focused */
-            bool *movement_fields[1] = { &edit_qty };
-            NavResult movement_nav = nav_handle_focus(movement_fields, 1);
+                        if (!edit_qty && !edit_reason) edit_qty = true; /* default focus */
+            bool *movement_fields[2] = { &edit_qty, &edit_reason };
+            NavResult movement_nav = nav_handle_focus(movement_fields, 2);
 
             by += 40;
             GuiLabel((Rectangle){ bx, by, 90, 24 }, "Quantite");
-            if (GuiTextBox((Rectangle){ bx + 100, by, 100, 24 }, m_qty, sizeof m_qty, edit_qty) && !movement_nav.moved)
+            if (GuiTextBox((Rectangle){ bx + 100, by, 100, 24 }, m_qty, sizeof m_qty, edit_qty) && !movement_nav.moved) {
                 edit_qty = !edit_qty;
+                if (edit_qty) edit_reason = false;
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 90, 24 }, "Raison");
+            if (GuiTextBox((Rectangle){ bx + 100, by, 220, 24 }, m_reason, sizeof m_reason, edit_reason) && !movement_nav.moved) {
+                edit_reason = !edit_reason;
+                if (edit_reason) edit_qty = false;
+            }
 
             by += 50;
             if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Valider") || movement_nav.submit) {
@@ -1841,7 +1940,7 @@ void gui_run(WmsDb *db) {
                     char err[256];
                     bool ok = inv_post_movement(p->id, 1, movement_sign * qty,
                                 movement_sign > 0 ? MV_RECEPTION : MV_EXPEDITION,
-                                "GUI", &g_session, NULL, err, sizeof err);
+                                "GUI", &g_session, m_reason, err, sizeof err);
                     if (ok) {
                         toast_show(&toast, "Mouvement enregistre", false);
                         panel = PANEL_NONE;
