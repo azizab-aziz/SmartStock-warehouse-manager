@@ -13,11 +13,11 @@ import subprocess
 import sys
 from datetime import datetime
 
-NAVY = "1E293B"
-TEAL = "10B981"
-RED = "DC2626"
-MUTED = "64748B"
-BORDER = "E2E8F0"
+NAVY = "#1E293B"
+TEAL = "#10B981"
+RED = "#DC2626"
+MUTED = "#64748B"
+BORDER = "#E2E8F0"
 
 
 def ensure_reportlab():
@@ -94,7 +94,7 @@ def main():
     statut_color = RED if statut == "STOCK FAIBLE" else TEAL
 
     label_style = ParagraphStyle("lbl", fontName="Helvetica-Bold", fontSize=9, textColor=colors.white)
-    value_style = ParagraphStyle("val", fontName="Helvetica", fontSize=10, textColor=colors.HexColor("1E293B"))
+    value_style = ParagraphStyle("val", fontName="Helvetica", fontSize=10, textColor=colors.HexColor(NAVY))
     statut_style = ParagraphStyle("statut", fontName="Helvetica-Bold", fontSize=10,
                                    textColor=colors.HexColor(statut_color))
 
@@ -130,7 +130,7 @@ def main():
         elements.append(Paragraph("Aucun mouvement enregistre pour ce produit.", value_style))
     else:
         header_style = ParagraphStyle("mh", fontName="Helvetica-Bold", fontSize=8.5, textColor=colors.white)
-        cell_style = ParagraphStyle("mc", fontName="Helvetica", fontSize=8.5, textColor=colors.HexColor("1E293B"))
+        cell_style = ParagraphStyle("mc", fontName="Helvetica", fontSize=8.5, textColor=colors.HexColor(NAVY))
 
         table_data = [[Paragraph(h, header_style) for h in mov_headers]]
         qty_idx = mov_headers.index("Qte") if "Qte" in mov_headers else None
@@ -158,7 +158,7 @@ def main():
         ]
         for r in range(1, len(table_data)):
             if r % 2 == 0:
-                style_cmds.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("EFF6FF")))
+                style_cmds.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#EFF6FF")))
         mov_table.setStyle(TableStyle(style_cmds))
         elements.append(mov_table)
 
