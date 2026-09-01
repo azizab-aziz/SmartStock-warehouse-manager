@@ -20,13 +20,14 @@
 #define COLOR_ACCENT_BLUE (Color){ 37, 99, 235, 255 }     /* primary buttons */
 #define COLOR_ACCENT_TEAL (Color){ 16, 185, 129, 255 }    /* success/positive */
 #define COLOR_ACCENT_RED  (Color){ 220, 38, 38, 255 }     /* errors/alerts */
+#define COLOR_ACCENT_ORANGE (Color){ 217, 119, 6, 255 }   /* low-stock warning (distinct from out-of-stock red) */
 #define COLOR_BG_LIGHT    (Color){ 248, 250, 252, 255 }   /* main content bg */
 #define COLOR_TEXT_MUTED  (Color){ 100, 116, 139, 255 }   /* secondary text */
 #define COLOR_BORDER      (Color){ 226, 232, 240, 255 }   /* card borders */
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -593,6 +594,12 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 170, sh }, "Produits archives") && !modal_active) {
         g_screen = SCREEN_ARCHIVED_PRODUCTS;
     }
+    cat_tx += 170 + cat_btn_gap;
+
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 130, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 130, sh }, "Alertes stock") && !modal_active) {
+        g_screen = SCREEN_STOCK_ALERTS;
+    }
 
     /* Alphabetical list (already sorted by db_list_categories via
        ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
@@ -1113,7 +1120,110 @@ static void draw_archived_products_screen(Product **all_products_ptr, int *total
             }
         }
 
-        row_y += 48;
+               row_y += 48;
+    }
+}
+
+/* One clickable alert row: name/sku on the left, category badge + qty
+ * vs threshold on the right. Shared by both sections below - only the
+ * accent color and which array it reads from differ. */
+static int draw_alert_row(Product *p, int sx, int row_y, int width, Color accent) {
+    Rectangle row_rect = { sx, row_y - 4, width, 44 };
+    bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect);
+    if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+    DrawLine(sx, row_y + 40, sx + width, row_y + 40, COLOR_BORDER);
+
+    DrawRectangle(sx, row_y - 4, 4, 44, accent); /* left accent stripe */
+
+    AppTextBold(p->name, sx + 16, row_y + 2, 15, (Color){30,41,59,255});
+    AppText(p->sku, sx + 16, row_y + 22, 12, COLOR_TEXT_MUTED);
+
+    char qty_buf[64];
+    snprintf(qty_buf, sizeof qty_buf, "%d / %d (seuil)", p->total_quantity, p->alert_threshold);
+    Vector2 qty_size = MeasureTextEx(g_appFontBold, qty_buf, 14, 1);
+    AppTextBold(qty_buf, sx + width - qty_size.x - 160, row_y + 4, 14, accent);
+
+    const char *cat_name = p->category[0] ? p->category : "Sans categorie";
+    Vector2 cat_size = MeasureTextEx(g_appFont, cat_name, 13, 1);
+    AppText(cat_name, sx + width - cat_size.x - 8, row_y + 22, 13, COLOR_ACCENT_BLUE);
+
+    if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        g_active_category_id = p->category_id;
+        snprintf(g_active_category_name, sizeof g_active_category_name, "%s", cat_name);
+        g_screen = SCREEN_MAIN;
+    }
+    return row_y + 48;
+}
+
+static void draw_stock_alerts_screen(Product *all_products, int total_products) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Alertes de stock", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    /* Classify every active product once per frame - cheap, same
+       "recompute fresh" style already used by the stats screens. */
+    Product *out_of_stock[256], *low_stock[256];
+    int out_count = 0, low_count = 0;
+    for (int i = 0; i < total_products; i++) {
+        Product *p = &all_products[i];
+        if (p->total_quantity <= 0) {
+            if (out_count < 256) out_of_stock[out_count++] = p;
+        } else if (p->total_quantity <= p->alert_threshold) {
+            if (low_count < 256) low_stock[low_count++] = p;
+        }
+    }
+
+    char summary[128];
+    snprintf(summary, sizeof summary, "%d produit(s) en rupture de stock  |  %d produit(s) en stock faible",
+             out_count, low_count);
+    AppText(summary, 20, 90, 14, COLOR_TEXT_MUTED);
+
+    int sx = 20, width = GetScreenWidth() - 2*sx;
+    int row_y = 130;
+    int MAX_SHOWN = 8;
+
+    /* ---- Section: out of stock ---- */
+    AppTextBold("Rupture de stock", sx, row_y, 16, COLOR_ACCENT_RED);
+    row_y += 30;
+    if (out_count == 0) {
+        AppText("Aucun produit en rupture de stock.", sx, row_y, 14, COLOR_TEXT_MUTED);
+        row_y += 40;
+    } else {
+        int shown = out_count < MAX_SHOWN ? out_count : MAX_SHOWN;
+        for (int i = 0; i < shown; i++) row_y = draw_alert_row(out_of_stock[i], sx, row_y, width, COLOR_ACCENT_RED);
+        if (out_count > shown) {
+            char more[64];
+            snprintf(more, sizeof more, "+ %d autre(s) produit(s) en rupture non affiches", out_count - shown);
+            AppText(more, sx, row_y, 12, COLOR_TEXT_MUTED);
+            row_y += 30;
+        }
+    }
+
+    row_y += 20;
+
+    /* ---- Section: low stock ---- */
+    AppTextBold("Stock faible (sous le seuil d'alerte)", sx, row_y, 16, COLOR_ACCENT_ORANGE);
+    row_y += 30;
+    if (low_count == 0) {
+        AppText("Aucun produit en stock faible.", sx, row_y, 14, COLOR_TEXT_MUTED);
+    } else {
+        int shown = low_count < MAX_SHOWN ? low_count : MAX_SHOWN;
+        for (int i = 0; i < shown; i++) row_y = draw_alert_row(low_stock[i], sx, row_y, width, COLOR_ACCENT_ORANGE);
+        if (low_count > shown) {
+            char more[64];
+            snprintf(more, sizeof more, "+ %d autre(s) produit(s) en stock faible non affiches", low_count - shown);
+            AppText(more, sx, row_y, 12, COLOR_TEXT_MUTED);
+        }
     }
 }
 
@@ -1326,6 +1436,14 @@ void gui_run(WmsDb *db) {
         if (g_screen == SCREEN_ARCHIVED_PRODUCTS) {
             BeginDrawing();
             draw_archived_products_screen(&all_products, &total_products, &toast);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- stock alerts dashboard (low stock + out of stock) ---- */
+        if (g_screen == SCREEN_STOCK_ALERTS) {
+            BeginDrawing();
+            draw_stock_alerts_screen(all_products, total_products);
             EndDrawing();
             continue;
         }
