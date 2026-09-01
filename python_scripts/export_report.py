@@ -1,8 +1,10 @@
 """
-export_report.py - reads a CSV written by the C app and produces a
-styled .xlsx report. No pandas/numpy - just csv (stdlib) + openpyxl.
+export_report.py - reads a CSV written by the C app (already sorted by
+category, then product name) and produces a styled .xlsx report grouped
+into one section per category, plus a top-level summary band.
+No pandas/numpy - just csv (stdlib) + openpyxl.
 
-Usage (all args optional, fixed defaults used otherwise):
+Usage:
     python export_report.py [csv_path] [xlsx_path] [sheet_name]
 """
 
@@ -15,13 +17,18 @@ DEFAULT_CSV = "exports/export.csv"
 DEFAULT_XLSX = "exports/rapport_stock.xlsx"
 DEFAULT_SHEET = "Rapport Stock"
 
-HEADER_COLOR = "1E293B"   # navy - matches SmartStock's header bar
-ROW_ALT_COLOR = "EFF6FF"  # very light blue - matches the app's row hover tint
-GREEN = "10B981"          # matches COLOR_ACCENT_TEAL
-RED = "DC2626"            # matches COLOR_ACCENT_RED
+HEADER_COLOR = "1E293B"     # navy - matches SmartStock's header bar
+SUBHEADER_COLOR = "334155"  # lighter navy - column header row inside a section
+ROW_ALT_COLOR = "EFF6FF"    # very light blue - matches the app's row hover tint
+SUMMARY_COLOR = "0F172A"    # darkest navy - top summary band
+GREEN = "10B981"
+RED = "DC2626"
 
-# Columns that must be written as real numbers (float), everything else
-# stays text. Must match the header names written by inv_export_csv().
+# Columns written by inv_export_csv() (in this exact order). "Categorie"
+# is used to split into sections, not shown as its own column.
+CSV_COLUMNS = ["PRD", "SKU", "Nom", "Categorie", "Unite",
+               "Quantite", "Prix_Unitaire", "Valeur_Stock", "Seuil_Alerte", "Statut"]
+DISPLAY_COLUMNS = ["PRD", "SKU", "Nom", "Unite", "Quantite", "Prix_Unitaire", "Valeur_Stock", "Seuil_Alerte", "Statut"]
 NUMERIC_COLUMNS = {"Quantite", "Prix_Unitaire", "Valeur_Stock", "Seuil_Alerte"}
 
 
@@ -41,8 +48,6 @@ from openpyxl.utils import get_column_letter
 
 
 def to_number(value):
-    """Best-effort float conversion. Returns None if it isn't numeric,
-    so the caller can fall back to writing the raw text instead."""
     try:
         return float(value)
     except (TypeError, ValueError):
@@ -57,75 +62,144 @@ def read_csv(path):
     return rows[0], rows[1:]
 
 
+def group_by_category(headers, data):
+    """Splits rows into (category_name, [rows]) groups, preserving the
+    order they arrive in - which is already category-then-name sorted
+    on the C side, so no re-sorting needed here."""
+    cat_idx = headers.index("Categorie")
+    groups = []
+    current_cat, current_rows = None, []
+    for row in data:
+        cat = row[cat_idx] if cat_idx < len(row) else ""
+        if cat != current_cat and current_rows:
+            groups.append((current_cat, current_rows))
+            current_rows = []
+        current_cat = cat
+        current_rows.append(row)
+    if current_rows:
+        groups.append((current_cat, current_rows))
+    return groups
+
+
 def build_workbook(headers, data, sheet_name):
     wb = Workbook()
     ws = wb.active
-    ws.title = (sheet_name or DEFAULT_SHEET)[:31]  # Excel sheet-name limit
+    ws.title = (sheet_name or DEFAULT_SHEET)[:31]
 
     thin = Side(style="thin", color="D0D5DD")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    header_fill = PatternFill("solid", fgColor=HEADER_COLOR)
-    header_font = Font(color="FFFFFF", bold=True)
     alt_fill = PatternFill("solid", fgColor=ROW_ALT_COLOR)
+    col_count = len(DISPLAY_COLUMNS)
 
-    # ---- header row ----
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=header)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.alignment = Alignment(horizontal="center", vertical="center")
-        cell.border = border
+    qty_idx = CSV_COLUMNS.index("Quantite")
+    price_idx = CSV_COLUMNS.index("Prix_Unitaire")
+    value_idx = CSV_COLUMNS.index("Valeur_Stock")
+    threshold_idx = CSV_COLUMNS.index("Seuil_Alerte")
+    statut_idx = CSV_COLUMNS.index("Statut")
 
-    qty_idx = headers.index("Quantite") if "Quantite" in headers else None
-    seuil_idx = headers.index("Seuil_Alerte") if "Seuil_Alerte" in headers else None
-    statut_idx = headers.index("Statut") if "Statut" in headers else None
+    # ---- top summary band ----
+    total_products = len(data)
+    total_qty = sum((to_number(r[qty_idx]) or 0) for r in data if qty_idx < len(r))
+    total_value = sum((to_number(r[value_idx]) or 0) for r in data if value_idx < len(r))
+    groups = group_by_category(headers, data)
 
-    # ---- data rows ----
-    for row_offset, row in enumerate(data):
-        r = row_offset + 2
-        is_alt = row_offset % 2 == 1
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
+    title_cell = ws.cell(row=1, column=1, value="Resume general")
+    title_cell.fill = PatternFill("solid", fgColor=SUMMARY_COLOR)
+    title_cell.font = Font(color="FFFFFF", bold=True, size=13)
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 24
 
-        low_stock = False
-        if qty_idx is not None and seuil_idx is not None:
+    summary_labels = ["Categories", "Produits", "Unites en stock", "Valeur totale du stock"]
+    summary_values = [len(groups), total_products, int(total_qty), f"{total_value:.2f} DT"]
+    for ci, (label, value) in enumerate(zip(summary_labels, summary_values), start=1):
+        lc = ws.cell(row=2, column=ci, value=label)
+        lc.font = Font(bold=True, color=HEADER_COLOR)
+        lc.border = border
+        vc = ws.cell(row=3, column=ci, value=value)
+        vc.font = Font(size=12, bold=True, color=GREEN)
+        vc.border = border
+    row_cursor = 5
+
+    # ---- one section per category ----
+    for cat_name, rows in groups:
+        display_name = cat_name if cat_name else "Sans categorie"
+
+        ws.merge_cells(start_row=row_cursor, start_column=1, end_row=row_cursor, end_column=col_count)
+        band = ws.cell(row=row_cursor, column=1, value=display_name)
+        band.fill = PatternFill("solid", fgColor=HEADER_COLOR)
+        band.font = Font(color="FFFFFF", bold=True, size=12)
+        band.alignment = Alignment(horizontal="left", vertical="center")
+        ws.row_dimensions[row_cursor].height = 22
+        row_cursor += 1
+
+        for ci, h in enumerate(DISPLAY_COLUMNS, start=1):
+            c = ws.cell(row=row_cursor, column=ci, value=h)
+            c.fill = PatternFill("solid", fgColor=SUBHEADER_COLOR)
+            c.font = Font(color="FFFFFF", bold=True)
+            c.alignment = Alignment(horizontal="center", vertical="center")
+            c.border = border
+        row_cursor += 1
+
+        cat_qty_total = 0.0
+        cat_value_total = 0.0
+
+        for i, row in enumerate(rows):
+            is_alt = i % 2 == 1
+            low_stock = False
             q = to_number(row[qty_idx]) if qty_idx < len(row) else None
-            s = to_number(row[seuil_idx]) if seuil_idx < len(row) else None
+            s = to_number(row[threshold_idx]) if threshold_idx < len(row) else None
             if q is not None and s is not None and q <= s:
                 low_stock = True
+            if q is not None:
+                cat_qty_total += q
+            v = to_number(row[value_idx]) if value_idx < len(row) else None
+            if v is not None:
+                cat_value_total += v
 
-        for col_idx, header in enumerate(headers, start=1):
-            raw = row[col_idx - 1] if col_idx - 1 < len(row) else ""
-            value = raw
-            if header in NUMERIC_COLUMNS:
-                num = to_number(raw)
-                value = num if num is not None else raw  # fallback: keep as text, don't crash
+            for ci, h in enumerate(DISPLAY_COLUMNS, start=1):
+                src_idx = CSV_COLUMNS.index(h)
+                raw = row[src_idx] if src_idx < len(row) else ""
+                value = raw
+                if h in NUMERIC_COLUMNS:
+                    num = to_number(raw)
+                    value = num if num is not None else raw  # fallback: keep as text, don't crash
 
-            cell = ws.cell(row=r, column=col_idx, value=value)
-            cell.border = border
-            if is_alt:
-                cell.fill = alt_fill
+                cell = ws.cell(row=row_cursor, column=ci, value=value)
+                cell.border = border
+                if is_alt:
+                    cell.fill = alt_fill
 
-            # Business-meaning colors:
-            #   Quantite   -> red+bold if at/under alert threshold, else default
-            #   Valeur_Stock -> green (positive/asset value)
-            #   Statut     -> red "STOCK FAIBLE" / green "OK"
-            if header == "Quantite" and low_stock:
-                cell.font = Font(color=RED, bold=True)
-            elif header == "Valeur_Stock":
-                cell.font = Font(color=GREEN)
-            elif header == "Statut":
-                cell.font = Font(color=RED if low_stock else GREEN, bold=True)
+                if h == "Quantite" and low_stock:
+                    cell.font = Font(color=RED, bold=True)
+                elif h == "Valeur_Stock":
+                    cell.font = Font(color=GREEN)
+                elif h == "Statut":
+                    cell.font = Font(color=RED if low_stock else GREEN, bold=True)
 
-    # ---- column widths: longest content + margin ----
-    for col_idx, header in enumerate(headers, start=1):
-        max_len = len(header)
+            row_cursor += 1
+
+        # subtotal line for this category
+        sub_label = ws.cell(row=row_cursor, column=1, value=f"Sous-total ({len(rows)} produit(s))")
+        sub_label.font = Font(bold=True, color=HEADER_COLOR)
+        qty_col = DISPLAY_COLUMNS.index("Quantite") + 1
+        value_col = DISPLAY_COLUMNS.index("Valeur_Stock") + 1
+        qc = ws.cell(row=row_cursor, column=qty_col, value=int(cat_qty_total))
+        qc.font = Font(bold=True)
+        vc = ws.cell(row=row_cursor, column=value_col, value=round(cat_value_total, 2))
+        vc.font = Font(bold=True, color=GREEN)
+        for ci in range(1, col_count + 1):
+            ws.cell(row=row_cursor, column=ci).border = border
+        row_cursor += 2  # blank spacer row before next category
+
+    # ---- column widths: longest content across the whole sheet + margin ----
+    for ci, h in enumerate(DISPLAY_COLUMNS, start=1):
+        max_len = len(h)
+        src_idx = CSV_COLUMNS.index(h)
         for row in data:
-            if col_idx - 1 < len(row):
-                max_len = max(max_len, len(str(row[col_idx - 1])))
-        ws.column_dimensions[get_column_letter(col_idx)].width = max_len + 4
-
-    ws.freeze_panes = "A2"
-    if data:
-        ws.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{len(data) + 1}"
+            if src_idx < len(row):
+                max_len = max(max_len, len(str(row[src_idx])))
+        ws.column_dimensions[get_column_letter(ci)].width = max_len + 4
 
     return wb
 

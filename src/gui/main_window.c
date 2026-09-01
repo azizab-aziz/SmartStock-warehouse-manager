@@ -323,6 +323,16 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
         return;
     }
 
+    /* Full-catalog export always writes to the same fixed report;
+     * a single-category export gets its own file (by category id, not
+     * name, to avoid accented/space filename issues) so the two never
+     * clobber each other. */
+    char xlsx_path[128];
+    if (category_id > 0)
+        snprintf(xlsx_path, sizeof xlsx_path, "exports/rapport_stock_cat%d.xlsx", category_id);
+    else
+        snprintf(xlsx_path, sizeof xlsx_path, "%s", EXPORT_XLSX_PATH);
+
     /* Redirect the python script's own stdout/stderr to a log file, since
        this app has no console - "type exports\export_log.txt" afterwards
        shows exactly why it failed (missing python, missing script,
@@ -330,7 +340,7 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
     char cmd[900];
     snprintf(cmd, sizeof cmd,
              "python \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\export_log.txt\" 2>&1",
-             EXPORT_PY_SCRIPT, EXPORT_CSV_PATH, EXPORT_XLSX_PATH, sheet_name);
+             EXPORT_PY_SCRIPT, EXPORT_CSV_PATH, xlsx_path, sheet_name);
     int rc = system(cmd);
 
     FILE *dbg = fopen("exports/export_debug.txt", "w");
@@ -340,8 +350,13 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
         fclose(dbg);
     }
 
-       if (rc == 0) toast_show(toast, "Rapport Excel genere (exports/rapport_stock.xlsx)", false);
-    else toast_show(toast, "Erreur - voir exports/export_log.txt", true);
+    if (rc == 0) {
+        char msg[160];
+        snprintf(msg, sizeof msg, "Rapport Excel genere (%s)", xlsx_path);
+        toast_show(toast, msg, false);
+    } else {
+        toast_show(toast, "Erreur - voir exports/export_log.txt", true);
+    }
 }
 
 #define EXPORT_INFO_CSV_PATH "exports/fiche_info.csv"
@@ -2080,7 +2095,7 @@ void gui_run(WmsDb *db) {
                 if (edit_reason) edit_qty = false;
             }
 
-                       by += 50;
+            by += 50;
             if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Valider") || movement_nav.submit) {
                 if (!str_is_integer(m_qty) || atoi(m_qty) <= 0) {
                     toast_show(&toast, "Quantite invalide (nombre entier positif requis)", true);

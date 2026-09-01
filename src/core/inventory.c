@@ -541,6 +541,30 @@ static void csv_write_field(FILE *f, const char *text) {
     fputc('"', f);
 }
 
+/* strcasecmp isn't reliably available on MinGW (same reasoning as
+ * ci_str_contains elsewhere in this codebase) - small local version. */
+static int local_strcasecmp(const char *a, const char *b) {
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca += 32;
+        if (cb >= 'A' && cb <= 'Z') cb += 32;
+        if (ca != cb) return (unsigned char)ca - (unsigned char)cb;
+        a++; b++;
+    }
+    return (unsigned char)*a - (unsigned char)*b;
+}
+
+/* Sorts by category name first, product name second - so a CSV row
+ * stream is already grouped into per-category blocks with no extra work
+ * needed on the Python side. */
+static int cmp_product_by_category_then_name(const void *pa, const void *pb) {
+    const Product *a = *(const Product * const *)pa;
+    const Product *b = *(const Product * const *)pb;
+    int c = local_strcasecmp(a->category, b->category);
+    if (c != 0) return c;
+    return local_strcasecmp(a->name, b->name);
+}
+
 bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err_len) {
     FILE *f = fopen(path, "wb"); /* binary mode - we're writing raw UTF-8 bytes, not text-mode-translated */
     if (!f) {
@@ -553,11 +577,22 @@ bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err
        The Python script's utf-8-sig reader already strips this correctly. */
     fputc(0xEF, f); fputc(0xBB, f); fputc(0xBF, f);
 
-    fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\r\n");
-    for (int i = 0; i < g_product_count; i++) {
-        Product *p = &g_products[i];
-        if (category_id > 0 && p->category_id != category_id) continue;
+        fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\r\n");
 
+    /* Snapshot + sort by category so the report always reflects exactly
+     * what's currently active (adds/restores/archives all included or
+     * excluded automatically, since this reads the live in-memory index
+     * fresh on every call) - grouped, not in arbitrary load order. */
+    Product *sorted[WMS_MAX_PRODUCTS];
+    int sorted_count = 0;
+    for (int i = 0; i < g_product_count; i++) {
+        if (category_id > 0 && g_products[i].category_id != category_id) continue;
+        sorted[sorted_count++] = &g_products[i];
+    }
+    qsort(sorted, sorted_count, sizeof(Product *), cmp_product_by_category_then_name);
+
+    for (int i = 0; i < sorted_count; i++) {
+        Product *p = sorted[i];
         double stock_value = (double)p->total_quantity * p->unit_price;
         const char *statut = (p->total_quantity <= p->alert_threshold) ? "STOCK FAIBLE" : "OK";
 
@@ -566,7 +601,7 @@ bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err
         csv_write_field(f, p->name); fputc(',', f);
         csv_write_field(f, p->category); fputc(',', f);
         csv_write_field(f, p->unit); fputc(',', f);
-                fprintf(f, "%d,%.2f,%.2f,%d,%s\r\n",
+        fprintf(f, "%d,%.2f,%.2f,%d,%s\r\n",
                 p->total_quantity, p->unit_price, stock_value, p->alert_threshold, statut);
     }
 
