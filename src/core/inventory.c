@@ -199,20 +199,22 @@ bool inv_update_product(const Product *in, char *err_out, size_t err_len) {
      * clobbering each other's edits to price/threshold/etc. */
     sqlite3_stmt *st;
     sqlite3_prepare_v2(g_db->handle,
-        "UPDATE products SET name=?, category=?, unit_price=?, "
+        "UPDATE products SET name=?, category=?, category_id=?, unit_price=?, "
         "alert_threshold=?, supplier_id=?, barcode=?, photo_path=?, "
         "version=version+1, updated_at=datetime('now') "
         "WHERE id=? AND version=?;", -1, &st, NULL);
     sqlite3_bind_text(st, 1, in->name, -1, SQLITE_TRANSIENT);
     sqlite3_bind_text(st, 2, in->category, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_double(st, 3, in->unit_price);
-    sqlite3_bind_int(st, 4, in->alert_threshold);
-    if (in->supplier_id > 0) sqlite3_bind_int(st, 5, in->supplier_id);
-    else sqlite3_bind_null(st, 5);
-    sqlite3_bind_text(st, 6, in->barcode, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(st, 7, in->photo_path, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(st, 8, in->id);
-    sqlite3_bind_int(st, 9, in->version);
+    if (in->category_id > 0) sqlite3_bind_int(st, 3, in->category_id);
+    else sqlite3_bind_null(st, 3);
+    sqlite3_bind_double(st, 4, in->unit_price);
+    sqlite3_bind_int(st, 5, in->alert_threshold);
+    if (in->supplier_id > 0) sqlite3_bind_int(st, 6, in->supplier_id);
+    else sqlite3_bind_null(st, 6);
+    sqlite3_bind_text(st, 7, in->barcode, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 8, in->photo_path, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 9, in->id);
+    sqlite3_bind_int(st, 10, in->version);
 
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
@@ -230,12 +232,13 @@ bool inv_update_product(const Product *in, char *err_out, size_t err_len) {
     }
     db_commit(g_db);
 
-    for (int i = 0; i < g_product_count; i++) {
+        for (int i = 0; i < g_product_count; i++) {
         if (g_products[i].id == in->id) {
             /* keep sku/prd_number immutable, refresh everything else */
             Product *p = &g_products[i];
             snprintf(p->name, sizeof p->name, "%s", in->name);
             snprintf(p->category, sizeof p->category, "%s", in->category);
+            p->category_id = in->category_id;
             p->unit_price = in->unit_price;
             p->alert_threshold = in->alert_threshold;
             p->supplier_id = in->supplier_id;
@@ -247,6 +250,7 @@ bool inv_update_product(const Product *in, char *err_out, size_t err_len) {
         }
     }
     return true;
+
 }
 
 bool inv_delete_product(int product_id, const Session *session, char *err_out, size_t err_len) {
