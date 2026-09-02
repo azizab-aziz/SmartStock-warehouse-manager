@@ -834,8 +834,70 @@ bool inv_restore_product(int product_id, char *err_out, size_t err_len) {
             p->category_id = sqlite3_column_int(st2, 12); /* 0 - restored as "Sans categorie" */
             index_product(p);
         }
-        sqlite3_finalize(st2);
+                sqlite3_finalize(st2);
     }
     refresh_product_total(product_id);
+    return true;
+}
+
+bool inv_backup_database(const char *backup_path, char *err_out, size_t err_len) {
+    sqlite3 *dest = NULL;
+    int rc = sqlite3_open(backup_path, &dest);
+    if (rc != SQLITE_OK) {
+        set_err(err_out, err_len, "Impossible de creer le fichier de sauvegarde");
+        if (dest) sqlite3_close(dest);
+        return false;
+    }
+
+    sqlite3_backup *b = sqlite3_backup_init(dest, "main", g_db->handle, "main");
+    if (!b) {
+        set_err(err_out, err_len, sqlite3_errmsg(dest));
+        sqlite3_close(dest);
+        return false;
+    }
+    sqlite3_backup_step(b, -1); /* -1 = copy all pages in one go */
+    rc = sqlite3_backup_finish(b);
+    sqlite3_close(dest);
+
+    if (rc != SQLITE_OK) {
+        set_err(err_out, err_len, "Erreur lors de la sauvegarde");
+        return false;
+    }
+    return true;
+}
+
+bool inv_restore_database(WmsDb *db, const char *backup_path, char *err_out, size_t err_len) {
+    sqlite3 *src = NULL;
+    int rc = sqlite3_open_v2(backup_path, &src, SQLITE_OPEN_READONLY, NULL);
+    if (rc != SQLITE_OK) {
+        set_err(err_out, err_len, "Fichier de sauvegarde introuvable ou invalide");
+        if (src) sqlite3_close(src);
+        return false;
+    }
+
+    sqlite3_backup *b = sqlite3_backup_init(db->handle, "main", src, "main");
+    if (!b) {
+        set_err(err_out, err_len, sqlite3_errmsg(db->handle));
+        sqlite3_close(src);
+        return false;
+    }
+    sqlite3_backup_step(b, -1);
+    rc = sqlite3_backup_finish(b);
+    sqlite3_close(src);
+
+    if (rc != SQLITE_OK) {
+        set_err(err_out, err_len, "Erreur lors de la restauration");
+        return false;
+    }
+
+    /* The live connection's data just changed underneath us - the
+       in-memory index (g_products, hash tables, g_categories) is now
+       stale and must be rebuilt from what was actually restored. */
+    inv_shutdown();
+    if (!inv_init(db)) {
+        set_err(err_out, err_len,
+                "Restauration effectuee mais echec du rechargement en memoire - redemarrez l'application");
+        return false;
+    }
     return true;
 }

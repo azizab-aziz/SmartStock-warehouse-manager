@@ -102,6 +102,14 @@ void inv_refresh_categories(WmsDb *db);
  * safety). On refusal, err_out lists how many products are still linked. */
 bool inv_delete_category(int category_id, const Session *session,
                           char *err_out, size_t err_len);
+/* Copies the live database into a new file at backup_path using SQLite's
+ * online backup API - safe to call while the app is running, no need to
+ * close the live connection. */
+bool inv_backup_database(const char *backup_path, char *err_out, size_t err_len);
+/* Overwrites the live database with the contents of backup_path, then
+ * rebuilds the in-memory product/category index from the restored data.
+ * Destructive - caller should confirm with the user first. */
+bool inv_restore_database(WmsDb *db, const char *backup_path, char *err_out, size_t err_len);
 /* Archive view: every inactive (soft-deleted) product, alphabetical.
  * *out points at internal storage - do not free. */
 int inv_get_archived_products(Product **out);

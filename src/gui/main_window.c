@@ -8,7 +8,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
-#include <direct.h>
+#include <direct.h>   /* _mkdir - MinGW/Windows */
+#include <dirent.h>   /* opendir/readdir - listing backups/ */
+#include <time.h>     /* timestamped backup filenames */
 
 
 #define _GNU_SOURCE
@@ -27,7 +29,7 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS, SCREEN_BACKUP } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -599,6 +601,14 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 130, sx, sh);
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 130, sh }, "Alertes stock") && !modal_active) {
         g_screen = SCREEN_STOCK_ALERTS;
+    }
+    cat_tx += 130 + cat_btn_gap;
+
+    if (session_can(&g_session, "user.manage")) {
+        toolbar_wrap(&cat_tx, &cat_toolbar_y, 130, sx, sh);
+        if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 130, sh }, "Sauvegarde") && !modal_active) {
+            g_screen = SCREEN_BACKUP;
+        }
     }
 
     /* Alphabetical list (already sorted by db_list_categories via
@@ -1217,13 +1227,121 @@ static void draw_stock_alerts_screen(Product *all_products, int total_products) 
     if (low_count == 0) {
         AppText("Aucun produit en stock faible.", sx, row_y, 14, COLOR_TEXT_MUTED);
     } else {
-        int shown = low_count < MAX_SHOWN ? low_count : MAX_SHOWN;
+               int shown = low_count < MAX_SHOWN ? low_count : MAX_SHOWN;
         for (int i = 0; i < shown; i++) row_y = draw_alert_row(low_stock[i], sx, row_y, width, COLOR_ACCENT_ORANGE);
         if (low_count > shown) {
             char more[64];
             snprintf(more, sizeof more, "+ %d autre(s) produit(s) en stock faible non affiches", low_count - shown);
             AppText(more, sx, row_y, 12, COLOR_TEXT_MUTED);
         }
+    }
+}
+
+/* Backup/restore screen. Backups live in backups/*.db (timestamped).
+ * Restore rebuilds the whole in-memory index and forces a re-login
+ * afterward, since the restored data may not even contain the current
+ * session's user id anymore. */
+static void draw_backup_screen(WmsDb *db, Product **all_products_ptr, int *total_products_ptr,
+                                Category **all_categories_ptr, int *total_categories_ptr,
+                                Toast *toast) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Sauvegarde et restauration", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    _mkdir("backups"); /* ignored if it already exists */
+
+    int sx = 20, sy = 100, sh = 34;
+    if (GuiButton((Rectangle){ sx, sy, 260, sh }, "Creer une sauvegarde maintenant")) {
+        time_t now = time(NULL);
+        struct tm *t = localtime(&now);
+        char path[128];
+        snprintf(path, sizeof path, "backups/backup_%04d%02d%02d_%02d%02d%02d.db",
+                 t->tm_year + 1900, t->tm_mon + 1, t->tm_mday, t->tm_hour, t->tm_min, t->tm_sec);
+        char err[256];
+        if (inv_backup_database(path, err, sizeof err)) {
+            char msg[160];
+            snprintf(msg, sizeof msg, "Sauvegarde creee: %s", path);
+            toast_show(toast, msg, false);
+        } else {
+            toast_show(toast, err, true);
+        }
+    }
+
+    AppTextBold("Sauvegardes disponibles", sx, sy + 50, 15, (Color){30,41,59,255});
+
+    static char restore_target[300] = "";
+    static bool confirm_restore = false;
+
+    int row_y = sy + 84;
+    int found = 0;
+    DIR *d = opendir("backups");
+    if (d) {
+        struct dirent *entry;
+        while ((entry = readdir(d)) != NULL) {
+            size_t len = strlen(entry->d_name);
+            if (len < 4 || strcmp(entry->d_name + len - 3, ".db") != 0) continue;
+            found++;
+
+            Rectangle row_rect = { sx, row_y - 4, GetScreenWidth() - 2*sx, 40 };
+            bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect) && !confirm_restore;
+            if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+            DrawLine(sx, row_y + 36, GetScreenWidth() - sx, row_y + 36, COLOR_BORDER);
+
+            AppText(entry->d_name, sx + 8, row_y + 8, 14, (Color){30,41,59,255});
+
+            Rectangle restore_btn = { GetScreenWidth() - sx - 130, row_y + 4, 130, 28 };
+            bool rb_hover = CheckCollisionPointRec(GetMousePosition(), restore_btn) && !confirm_restore;
+            DrawRectangleRounded(restore_btn, 0.2f, 4, rb_hover ? (Color){29,78,216,255} : COLOR_ACCENT_BLUE);
+            Vector2 rt = MeasureTextEx(g_appFont, "Restaurer", 13, 1);
+            AppText("Restaurer", restore_btn.x + restore_btn.width/2 - rt.x/2, restore_btn.y + 6, 13, WHITE);
+            if (rb_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                snprintf(restore_target, sizeof restore_target, "backups/%s", entry->d_name);
+                confirm_restore = true;
+            }
+
+            row_y += 44;
+        }
+        closedir(d);
+    }
+    if (found == 0) {
+        AppText("Aucune sauvegarde pour le moment.", sx, row_y, 14, COLOR_TEXT_MUTED);
+    }
+
+    /* ---- Confirm restore ---- */
+    if (confirm_restore) {
+        Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 100, 440, 200 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Confirmer la restauration");
+        float bx = box.x + 20, by = box.y + 40;
+        AppText("Toutes les donnees actuelles seront remplacees par", bx, by, 14, (Color){30,41,59,255});
+        AppText(TextFormat("celles de: %s", restore_target), bx, by + 20, 13, COLOR_TEXT_MUTED);
+        AppText("Cette action est irreversible.", bx, by + 40, 13, COLOR_ACCENT_RED);
+
+        by += 70;
+        if (GuiButton((Rectangle){ bx, by, 170, 34 }, "Oui, restaurer")) {
+            char err[256];
+            if (inv_restore_database(db, restore_target, err, sizeof err)) {
+                *total_products_ptr = inv_all_products(all_products_ptr);
+                *total_categories_ptr = inv_get_categories(all_categories_ptr);
+                toast_show(toast, "Restauration reussie - reconnexion requise", false);
+                session_logout(db, &g_session);
+                g_screen = SCREEN_LOGIN;
+            } else {
+                toast_show(toast, err, true);
+            }
+            confirm_restore = false;
+        }
+        if (GuiButton((Rectangle){ bx + 190, by, 170, 34 }, "Annuler")) confirm_restore = false;
     }
 }
 
@@ -1444,6 +1562,14 @@ void gui_run(WmsDb *db) {
         if (g_screen == SCREEN_STOCK_ALERTS) {
             BeginDrawing();
             draw_stock_alerts_screen(all_products, total_products);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- backup / restore screen ---- */
+        if (g_screen == SCREEN_BACKUP) {
+            BeginDrawing();
+            draw_backup_screen(db, &all_products, &total_products, &all_categories, &total_categories, &toast);
             EndDrawing();
             continue;
         }
