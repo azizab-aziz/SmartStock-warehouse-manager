@@ -69,9 +69,9 @@ dependencies.
 |---|---|
 | ![Movement history panel](screenshots/movement_history.png) | ![Audit log screen](screenshots/audit_log.png) |
 
-| Statistics (all categories) | Statistics (single category) |
-|---|---|
-| ![Global stats charts](screenshots/stats_global.png) | ![Category stats charts](screenshots/stats_category.png) |
+### Statistics
+
+![Category stats charts](screenshots/stats_category.png)
 
 | Stock alerts dashboard | Archived products |
 |---|---|
