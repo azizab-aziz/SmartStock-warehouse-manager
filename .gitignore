@@ -22,3 +22,10 @@ lib/sqlite3/*
 # OS junk
 Thumbs.db
 desktop.ini
+   bin/
+   obj/
+   saves/
+   exports/
+   backups/
+   *.o
+   *.exe
