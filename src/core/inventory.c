@@ -199,7 +199,7 @@ bool inv_update_product(const Product *in, char *err_out, size_t err_len) {
      * clobbering each other's edits to price/threshold/etc. */
     sqlite3_stmt *st;
     sqlite3_prepare_v2(g_db->handle,
-        "UPDATE products SET name=?, category=?, category_id=?, unit_price=?, "
+        "UPDATE products SET name=?, category=?, category_id=?, unit=?, unit_price=?, "
         "alert_threshold=?, supplier_id=?, barcode=?, photo_path=?, "
         "version=version+1, updated_at=datetime('now') "
         "WHERE id=? AND version=?;", -1, &st, NULL);
@@ -207,14 +207,15 @@ bool inv_update_product(const Product *in, char *err_out, size_t err_len) {
     sqlite3_bind_text(st, 2, in->category, -1, SQLITE_TRANSIENT);
     if (in->category_id > 0) sqlite3_bind_int(st, 3, in->category_id);
     else sqlite3_bind_null(st, 3);
-    sqlite3_bind_double(st, 4, in->unit_price);
-    sqlite3_bind_int(st, 5, in->alert_threshold);
-    if (in->supplier_id > 0) sqlite3_bind_int(st, 6, in->supplier_id);
-    else sqlite3_bind_null(st, 6);
-    sqlite3_bind_text(st, 7, in->barcode, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_text(st, 8, in->photo_path, -1, SQLITE_TRANSIENT);
-    sqlite3_bind_int(st, 9, in->id);
-    sqlite3_bind_int(st, 10, in->version);
+    sqlite3_bind_text(st, 4, in->unit[0] ? in->unit : "piece", -1, SQLITE_TRANSIENT);
+    sqlite3_bind_double(st, 5, in->unit_price);
+    sqlite3_bind_int(st, 6, in->alert_threshold);
+    if (in->supplier_id > 0) sqlite3_bind_int(st, 7, in->supplier_id);
+    else sqlite3_bind_null(st, 7);
+    sqlite3_bind_text(st, 8, in->barcode, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 9, in->photo_path, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 10, in->id);
+    sqlite3_bind_int(st, 11, in->version);
 
     int rc = sqlite3_step(st);
     sqlite3_finalize(st);
@@ -239,6 +240,7 @@ bool inv_update_product(const Product *in, char *err_out, size_t err_len) {
             snprintf(p->name, sizeof p->name, "%s", in->name);
             snprintf(p->category, sizeof p->category, "%s", in->category);
             p->category_id = in->category_id;
+            snprintf(p->unit, sizeof p->unit, "%s", in->unit);
             p->unit_price = in->unit_price;
             p->alert_threshold = in->alert_threshold;
             p->supplier_id = in->supplier_id;
