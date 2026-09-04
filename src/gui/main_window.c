@@ -29,10 +29,12 @@
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS, SCREEN_BACKUP } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS, SCREEN_BACKUP, SCREEN_SUPPLIERS, SCREEN_PURCHASE_ORDERS, SCREEN_PO_DETAIL } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
+static int     g_active_po_id = 0;
+static char    g_active_po_number[32] = "";
 static float   g_splashTimer = 0.0f;
 static Session g_session = {0};
 static Font g_appFont;
@@ -604,11 +606,23 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     }
     cat_tx += 130 + cat_btn_gap;
 
-    if (session_can(&g_session, "user.manage")) {
+        if (session_can(&g_session, "user.manage")) {
         toolbar_wrap(&cat_tx, &cat_toolbar_y, 130, sx, sh);
         if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 130, sh }, "Sauvegarde") && !modal_active) {
             g_screen = SCREEN_BACKUP;
         }
+        cat_tx += 130 + cat_btn_gap;
+    }
+
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 140, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 140, sh }, "Fournisseurs") && !modal_active) {
+        g_screen = SCREEN_SUPPLIERS;
+    }
+    cat_tx += 140 + cat_btn_gap;
+
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 140, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 140, sh }, "Commandes") && !modal_active) {
+        g_screen = SCREEN_PURCHASE_ORDERS;
     }
 
     /* Alphabetical list (already sorted by db_list_categories via
@@ -1341,7 +1355,454 @@ static void draw_backup_screen(WmsDb *db, Product **all_products_ptr, int *total
             }
             confirm_restore = false;
         }
-        if (GuiButton((Rectangle){ bx + 190, by, 170, 34 }, "Annuler")) confirm_restore = false;
+                if (GuiButton((Rectangle){ bx + 190, by, 170, 34 }, "Annuler")) confirm_restore = false;
+    }
+}
+
+static void draw_suppliers_screen(WmsDb *db, Toast *toast) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Fournisseurs", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    static Supplier suppliers[256];
+    int count = db_list_suppliers(db, suppliers, 256);
+
+    static bool show_form = false;
+    static bool editing = false;
+    static int edit_id = 0;
+    static char f_name[128] = {0}, f_contact[128] = {0}, f_phone[32] = {0},
+                f_email[128] = {0}, f_address[192] = {0};
+    static bool e_name=false, e_contact=false, e_phone=false, e_email=false, e_address=false;
+
+    bool modal_active = show_form;
+
+    int sx = 20, sy = 100, sh = 32;
+    if (GuiButton((Rectangle){ sx, sy, 200, sh }, "+ Ajouter fournisseur") && !modal_active) {
+        show_form = true; editing = false; edit_id = 0;
+        f_name[0]=f_contact[0]=f_phone[0]=f_email[0]=f_address[0]='\0';
+        e_name = true; e_contact=e_phone=e_email=e_address=false;
+    }
+
+    int row_y = sy + sh + 30;
+    if (count == 0) {
+        AppText("Aucun fournisseur pour le moment.", sx, row_y, 14, COLOR_TEXT_MUTED);
+    }
+    for (int i = 0; i < count; i++) {
+        Supplier *s = &suppliers[i];
+        Rectangle row_rect = { sx, row_y - 4, GetScreenWidth() - 2*sx, 44 };
+        bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect) && !modal_active;
+        if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+        DrawLine(sx, row_y+40, GetScreenWidth()-sx, row_y+40, COLOR_BORDER);
+
+        AppTextBold(s->name, sx+8, row_y+2, 15, (Color){30,41,59,255});
+        char sub[256];
+        snprintf(sub, sizeof sub, "%s | %s | %s", s->contact_name[0]?s->contact_name:"-",
+                 s->phone[0]?s->phone:"-", s->email[0]?s->email:"-");
+        AppText(sub, sx+8, row_y+22, 12, COLOR_TEXT_MUTED);
+
+        Rectangle mod_btn = { GetScreenWidth()-sx-190, row_y+8, 85, 28 };
+        Rectangle del_btn = { GetScreenWidth()-sx-95, row_y+8, 85, 28 };
+        bool mod_hover = CheckCollisionPointRec(GetMousePosition(), mod_btn) && !modal_active;
+        DrawRectangleLinesEx(mod_btn, 1, COLOR_BORDER);
+        if (mod_hover) DrawRectangleRec(mod_btn, (Color){239,246,255,255});
+        AppText("Modifier", mod_btn.x+12, mod_btn.y+6, 13, (Color){30,41,59,255});
+        if (mod_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            show_form = true; editing = true; edit_id = s->id;
+            snprintf(f_name, sizeof f_name, "%s", s->name);
+            snprintf(f_contact, sizeof f_contact, "%s", s->contact_name);
+            snprintf(f_phone, sizeof f_phone, "%s", s->phone);
+            snprintf(f_email, sizeof f_email, "%s", s->email);
+            snprintf(f_address, sizeof f_address, "%s", s->address);
+            e_name = true; e_contact=e_phone=e_email=e_address=false;
+        }
+
+        bool del_hover = CheckCollisionPointRec(GetMousePosition(), del_btn) && !modal_active;
+        DrawRectangleLinesEx(del_btn, 1, COLOR_BORDER);
+        if (del_hover) DrawRectangleRec(del_btn, (Color){254,242,242,255});
+        AppText("Suppr.", del_btn.x+16, del_btn.y+6, 13, (Color){185,28,28,255});
+        if (del_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            char err[256];
+            if (db_delete_supplier(db, s->id, err, sizeof err)) toast_show(toast, "Fournisseur supprime", false);
+            else toast_show(toast, err, true);
+        }
+
+        row_y += 48;
+    }
+
+    if (show_form) {
+        Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 200, 440, 400 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, editing ? "Modifier le fournisseur" : "Nouveau fournisseur");
+
+        bool *flags[5] = { &e_name, &e_contact, &e_phone, &e_email, &e_address };
+        NavResult nav = nav_handle_focus(flags, 5);
+
+        float bx = box.x+20, by = box.y+40;
+        GuiLabel((Rectangle){bx,by,100,24}, "Nom");
+        if (GuiTextBox((Rectangle){bx+110,by,280,24}, f_name, sizeof f_name, e_name) && !nav.moved) {
+            e_name=!e_name; if(e_name){e_contact=e_phone=e_email=e_address=false;}
+        }
+        by+=34;
+        GuiLabel((Rectangle){bx,by,100,24}, "Contact");
+        if (GuiTextBox((Rectangle){bx+110,by,280,24}, f_contact, sizeof f_contact, e_contact) && !nav.moved) {
+            e_contact=!e_contact; if(e_contact){e_name=e_phone=e_email=e_address=false;}
+        }
+        by+=34;
+        GuiLabel((Rectangle){bx,by,100,24}, "Telephone");
+        if (GuiTextBox((Rectangle){bx+110,by,280,24}, f_phone, sizeof f_phone, e_phone) && !nav.moved) {
+            e_phone=!e_phone; if(e_phone){e_name=e_contact=e_email=e_address=false;}
+        }
+        by+=34;
+        GuiLabel((Rectangle){bx,by,100,24}, "Email");
+        if (GuiTextBox((Rectangle){bx+110,by,280,24}, f_email, sizeof f_email, e_email) && !nav.moved) {
+            e_email=!e_email; if(e_email){e_name=e_contact=e_phone=e_address=false;}
+        }
+        by+=34;
+        GuiLabel((Rectangle){bx,by,100,24}, "Adresse");
+        if (GuiTextBox((Rectangle){bx+110,by,280,24}, f_address, sizeof f_address, e_address) && !nav.moved) {
+            e_address=!e_address; if(e_address){e_name=e_contact=e_phone=e_email=false;}
+        }
+
+        by += 50;
+        if (GuiButton((Rectangle){bx,by,130,32}, "Enregistrer") || nav.submit) {
+            Supplier s = {0};
+            s.id = edit_id;
+            snprintf(s.name, sizeof s.name, "%s", f_name);
+            snprintf(s.contact_name, sizeof s.contact_name, "%s", f_contact);
+            snprintf(s.phone, sizeof s.phone, "%s", f_phone);
+            snprintf(s.email, sizeof s.email, "%s", f_email);
+            snprintf(s.address, sizeof s.address, "%s", f_address);
+
+            char err[256];
+            bool ok = editing ? db_update_supplier(db, &s, err, sizeof err)
+                              : db_create_supplier(db, &s, err, sizeof err);
+
+            if (ok) {
+                toast_show(toast, editing ? "Fournisseur modifie" : "Fournisseur ajoute", false);
+                show_form = false;
+            } else {
+                toast_show(toast, err, true);
+            }
+        }
+        if (GuiButton((Rectangle){bx+150,by,130,32}, "Annuler")) show_form = false;
+    }
+}
+
+static void draw_purchase_orders_screen(WmsDb *db, Toast *toast) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Commandes fournisseurs", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    static PurchaseOrder pos[256];
+    int count = db_list_purchase_orders(db, pos, 256);
+
+    static bool show_form = false;
+    static Supplier suppliers[256];
+    static int supplier_count = 0;
+    static int f_supplier_id = 0;
+    static char f_supplier_name[128] = {0};
+    static bool supplier_dropdown_open = false;
+    static char f_reference[64] = {0};
+    static bool e_reference = false;
+
+    bool modal_active = show_form;
+
+    int sx = 20, sy = 100, sh = 32;
+    if (GuiButton((Rectangle){ sx, sy, 200, sh }, "+ Nouvelle commande") && !modal_active) {
+        show_form = true;
+        supplier_count = db_list_suppliers(db, suppliers, 256);
+        f_supplier_id = 0; f_supplier_name[0] = '\0'; f_reference[0] = '\0';
+        supplier_dropdown_open = false; e_reference = true;
+    }
+
+    int row_y = sy + sh + 30;
+    AppTextBold("N. commande", sx, row_y, 13, DARKGRAY);
+    AppTextBold("Fournisseur", sx+120, row_y, 13, DARKGRAY);
+    AppTextBold("Statut", sx+380, row_y, 13, DARKGRAY);
+    AppTextBold("Cree le", sx+520, row_y, 13, DARKGRAY);
+    row_y += 28;
+
+    if (count == 0) {
+        AppText("Aucune commande pour le moment.", sx, row_y, 14, COLOR_TEXT_MUTED);
+    }
+    for (int i = 0; i < count; i++) {
+        PurchaseOrder *po = &pos[i];
+        Rectangle row_rect = { sx, row_y - 4, GetScreenWidth() - 2*sx, 32 };
+        bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect) && !modal_active;
+        if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+        DrawLine(sx, row_y+28, GetScreenWidth()-sx, row_y+28, COLOR_BORDER);
+
+        AppText(po->po_number, sx, row_y+4, 14, (Color){30,41,59,255});
+        AppText(po->supplier_name, sx+120, row_y+4, 14, (Color){30,41,59,255});
+
+        Color status_color = COLOR_TEXT_MUTED;
+        if (strcmp(po->status, "recu") == 0) status_color = COLOR_ACCENT_TEAL;
+        else if (strcmp(po->status, "recu_partiel") == 0) status_color = COLOR_ACCENT_ORANGE;
+        else if (strcmp(po->status, "annule") == 0) status_color = COLOR_ACCENT_RED;
+        AppText(po->status, sx+380, row_y+4, 14, status_color);
+        AppText(po->created_at, sx+520, row_y+4, 13, COLOR_TEXT_MUTED);
+
+        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            g_active_po_id = po->id;
+            snprintf(g_active_po_number, sizeof g_active_po_number, "%s", po->po_number);
+            g_screen = SCREEN_PO_DETAIL;
+        }
+        row_y += 36;
+    }
+
+    if (show_form) {
+        Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 130, 440, 260 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Nouvelle commande");
+
+        float bx = box.x+20, by = box.y+40;
+        GuiLabel((Rectangle){bx,by,100,24}, "Fournisseur");
+        Rectangle sup_field = { bx+110, by, 280, 24 };
+        bool sup_hover = CheckCollisionPointRec(GetMousePosition(), sup_field);
+        DrawRectangleRec(sup_field, WHITE);
+        DrawRectangleLinesEx(sup_field, 1, supplier_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+        AppText(f_supplier_name[0] ? f_supplier_name : "Choisir un fournisseur (optionnel)",
+                sup_field.x+8, sup_field.y+5, 13, f_supplier_name[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
+        if (sup_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            supplier_dropdown_open = !supplier_dropdown_open;
+            e_reference = false;
+        }
+
+        by += 34;
+        GuiLabel((Rectangle){bx,by,100,24}, "Reference");
+        if (!supplier_dropdown_open) {
+            bool *flags[1] = { &e_reference };
+            NavResult nav = nav_handle_focus(flags, 1);
+            if (GuiTextBox((Rectangle){bx+110,by,280,24}, f_reference, sizeof f_reference, e_reference) && !nav.moved)
+                e_reference = !e_reference;
+        }
+
+        by += 50;
+        if (!supplier_dropdown_open) {
+            if (GuiButton((Rectangle){bx,by,130,32}, "Creer")) {
+                int new_po_id;
+                char err[256];
+                if (db_create_purchase_order(db, f_supplier_id, g_session.user_id, f_reference,
+                                              &new_po_id, err, sizeof err)) {
+                    g_active_po_id = new_po_id;
+                    PurchaseOrder tmp[256];
+                    int c = db_list_purchase_orders(db, tmp, 256);
+                    for (int i = 0; i < c; i++)
+                        if (tmp[i].id == new_po_id)
+                            snprintf(g_active_po_number, sizeof g_active_po_number, "%s", tmp[i].po_number);
+                    toast_show(toast, "Commande creee", false);
+                    show_form = false;
+                    g_screen = SCREEN_PO_DETAIL;
+                } else {
+                    toast_show(toast, err, true);
+                }
+            }
+            if (GuiButton((Rectangle){bx+150,by,130,32}, "Annuler")) show_form = false;
+        }
+
+        if (supplier_dropdown_open) {
+            float row_h = 26;
+            Rectangle dd = { sup_field.x, sup_field.y + sup_field.height + 2, sup_field.width, row_h * supplier_count };
+            DrawRectangleRec(dd, WHITE);
+            DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+            for (int i = 0; i < supplier_count; i++) {
+                Rectangle row = { dd.x, dd.y + i*row_h, dd.width, row_h };
+                bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                if (hover) DrawRectangleRec(row, (Color){239,246,255,255});
+                AppText(suppliers[i].name, row.x+8, row.y+5, 13, (Color){30,41,59,255});
+                if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    f_supplier_id = suppliers[i].id;
+                    snprintf(f_supplier_name, sizeof f_supplier_name, "%s", suppliers[i].name);
+                    supplier_dropdown_open = false;
+                }
+            }
+        }
+    }
+}
+
+static void draw_po_detail_screen(WmsDb *db, Toast *toast) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText(TextFormat("Commande %s", g_active_po_number), 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Commandes", 14, 1);
+    AppText("< Commandes", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_PURCHASE_ORDERS;
+
+    static PurchaseOrderItem items[256];
+    int count = db_get_po_items(db, g_active_po_id, items, 256);
+
+    static bool show_add_item = false;
+    static char f_sku[64] = {0};
+    static char f_qty[16] = {0};
+    static char f_cost[32] = {0};
+    static bool e_sku=false, e_qty=false, e_cost=false;
+
+    static bool show_receive = false;
+    static int receive_item_id = 0, receive_product_id = 0, receive_already = 0, receive_ordered = 0;
+    static char receive_po_number[32] = {0};
+    static char r_qty[16] = {0};
+    static bool e_rqty = false;
+
+    bool modal_active = show_add_item || show_receive;
+
+    int sx = 20, sy = 100, sh = 32;
+    if (GuiButton((Rectangle){ sx, sy, 170, sh }, "+ Ajouter article") && !modal_active) {
+        show_add_item = true;
+        f_sku[0]=f_qty[0]=f_cost[0]='\0';
+        e_sku = true; e_qty=e_cost=false;
+    }
+
+    int row_y = sy + sh + 30;
+    AppTextBold("SKU", sx, row_y, 13, DARKGRAY);
+    AppTextBold("Produit", sx+110, row_y, 13, DARKGRAY);
+    AppTextBold("Commande", sx+380, row_y, 13, DARKGRAY);
+    AppTextBold("Recu", sx+470, row_y, 13, DARKGRAY);
+    AppTextBold("Cout unit.", sx+540, row_y, 13, DARKGRAY);
+    row_y += 28;
+
+    if (count == 0) {
+        AppText("Aucun article - cliquez sur \"+ Ajouter article\".", sx, row_y, 14, COLOR_TEXT_MUTED);
+    }
+    for (int i = 0; i < count; i++) {
+        PurchaseOrderItem *it = &items[i];
+        bool fully_received = it->quantity_received >= it->quantity_ordered;
+
+        AppText(it->product_sku, sx, row_y, 13, (Color){30,41,59,255});
+        AppText(it->product_name, sx+110, row_y, 13, (Color){30,41,59,255});
+        DrawText(TextFormat("%d", it->quantity_ordered), sx+380, row_y, 13, BLACK);
+        DrawText(TextFormat("%d", it->quantity_received), sx+470, row_y,
+                 13, fully_received ? (Color){16,150,90,255} : (Color){200,120,20,255});
+        DrawText(TextFormat("%.2f", it->unit_cost), sx+540, row_y, 13, BLACK);
+
+        Rectangle recv_btn = { GetScreenWidth() - sx - 110, row_y - 4, 110, 26 };
+        bool recv_hover = CheckCollisionPointRec(GetMousePosition(), recv_btn) && !modal_active && !fully_received;
+        DrawRectangleRounded(recv_btn, 0.2f, 4, fully_received ? (Color){200,200,200,255} :
+                              (recv_hover ? (Color){13,148,105,255} : COLOR_ACCENT_TEAL));
+        AppText(fully_received ? "Complete" : "Recevoir", recv_btn.x+14, recv_btn.y+5, 13, WHITE);
+        if (recv_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            show_receive = true;
+            receive_item_id = it->id;
+            receive_product_id = it->product_id;
+            receive_already = it->quantity_received;
+            receive_ordered = it->quantity_ordered;
+            snprintf(receive_po_number, sizeof receive_po_number, "%s", g_active_po_number);
+            r_qty[0] = '\0';
+            e_rqty = true;
+        }
+
+        row_y += 30;
+    }
+
+    if (show_add_item) {
+        Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 130, 400, 260 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Ajouter un article");
+
+        bool *flags[3] = { &e_sku, &e_qty, &e_cost };
+        NavResult nav = nav_handle_focus(flags, 3);
+
+        float bx = box.x+20, by = box.y+40;
+        GuiLabel((Rectangle){bx,by,100,24}, "SKU produit");
+        if (GuiTextBox((Rectangle){bx+110,by,220,24}, f_sku, sizeof f_sku, e_sku) && !nav.moved) {
+            e_sku=!e_sku; if(e_sku){e_qty=e_cost=false;}
+        }
+        by += 34;
+        GuiLabel((Rectangle){bx,by,100,24}, "Quantite");
+        if (GuiTextBox((Rectangle){bx+110,by,120,24}, f_qty, sizeof f_qty, e_qty) && !nav.moved) {
+            e_qty=!e_qty; if(e_qty){e_sku=e_cost=false;}
+        }
+        by += 34;
+        GuiLabel((Rectangle){bx,by,100,24}, "Cout unitaire");
+        if (GuiTextBox((Rectangle){bx+110,by,120,24}, f_cost, sizeof f_cost, e_cost) && !nav.moved) {
+            e_cost=!e_cost; if(e_cost){e_sku=e_qty=false;}
+        }
+
+        by += 50;
+        if (GuiButton((Rectangle){bx,by,120,32}, "Ajouter") || nav.submit) {
+            Product *p = inv_find_by_sku(f_sku);
+            if (!p) {
+                toast_show(toast, "SKU introuvable", true);
+            } else if (!str_is_integer(f_qty) || atoi(f_qty) <= 0) {
+                toast_show(toast, "Quantite invalide", true);
+            } else if (!str_is_decimal(f_cost) || atof(f_cost) < 0) {
+                toast_show(toast, "Cout unitaire invalide", true);
+            } else {
+                char err[256];
+                if (db_add_po_item(db, g_active_po_id, p->id, atoi(f_qty), atof(f_cost), err, sizeof err)) {
+                    db_update_po_status(db, g_active_po_id, "commande");
+                    toast_show(toast, "Article ajoute", false);
+                    show_add_item = false;
+                } else {
+                    toast_show(toast, err, true);
+                }
+            }
+        }
+        if (GuiButton((Rectangle){bx+140,by,120,32}, "Annuler")) show_add_item = false;
+    }
+
+    if (show_receive) {
+        Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 100, 400, 200 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, "Reception de l'article");
+
+        float bx = box.x+20, by = box.y+40;
+        AppText(TextFormat("Deja recu: %d / %d commande(s)", receive_already, receive_ordered),
+                bx, by, 14, COLOR_TEXT_MUTED);
+
+        by += 30;
+        if (!e_rqty) e_rqty = true;
+        bool *flags[1] = { &e_rqty };
+        NavResult nav = nav_handle_focus(flags, 1);
+        GuiLabel((Rectangle){bx,by,220,24}, "Nouvelle quantite recue (total)");
+        if (GuiTextBox((Rectangle){bx,by+26,120,24}, r_qty, sizeof r_qty, e_rqty) && !nav.moved)
+            e_rqty = !e_rqty;
+
+        by += 66;
+        if (GuiButton((Rectangle){bx,by,130,32}, "Confirmer") || nav.submit) {
+            if (!str_is_integer(r_qty)) {
+                toast_show(toast, "Quantite invalide", true);
+            } else {
+                int new_total = atoi(r_qty);
+                if (new_total <= receive_already || new_total > receive_ordered) {
+                    toast_show(toast, "Doit depasser le deja-recu, sans depasser la commande", true);
+                } else {
+                    char err[256];
+                    if (inv_receive_po_item(g_active_po_id, receive_item_id, receive_product_id,
+                                             receive_already, new_total, receive_po_number,
+                                             &g_session, err, sizeof err)) {
+                        toast_show(toast, "Reception enregistree", false);
+                        show_receive = false;
+                    } else {
+                        toast_show(toast, err, true);
+                    }
+                }
+            }
+        }
+        if (GuiButton((Rectangle){bx+150,by,130,32}, "Annuler")) show_receive = false;
     }
 }
 
@@ -1566,10 +2027,34 @@ void gui_run(WmsDb *db) {
             continue;
         }
 
-        /* ---- backup / restore screen ---- */
+                /* ---- backup / restore screen ---- */
         if (g_screen == SCREEN_BACKUP) {
             BeginDrawing();
             draw_backup_screen(db, &all_products, &total_products, &all_categories, &total_categories, &toast);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- suppliers screen ---- */
+        if (g_screen == SCREEN_SUPPLIERS) {
+            BeginDrawing();
+            draw_suppliers_screen(db, &toast);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- purchase orders list ---- */
+        if (g_screen == SCREEN_PURCHASE_ORDERS) {
+            BeginDrawing();
+            draw_purchase_orders_screen(db, &toast);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- purchase order detail / receiving ---- */
+        if (g_screen == SCREEN_PO_DETAIL) {
+            BeginDrawing();
+            draw_po_detail_screen(db, &toast);
             EndDrawing();
             continue;
         }

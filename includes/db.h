@@ -62,4 +62,55 @@ bool db_update_user_role(WmsDb *db, int user_id, const char *new_role);
 
 bool db_update_category_name(WmsDb *db, int category_id, const char *new_name);
 
+typedef struct {
+    int  id;
+    char name[128];
+    char contact_name[128];
+    char phone[32];
+    char email[128];
+    char address[192];
+} Supplier;
+
+int  db_list_suppliers(WmsDb *db, Supplier *out, int max_count);
+bool db_create_supplier(WmsDb *db, const Supplier *s, char *err_out, size_t err_len);
+bool db_update_supplier(WmsDb *db, const Supplier *s, char *err_out, size_t err_len);
+/* Refuses if any active product still references this supplier. */
+bool db_delete_supplier(WmsDb *db, int supplier_id, char *err_out, size_t err_len);
+
+typedef struct {
+    int  id;
+    int  supplier_id;
+    char supplier_name[128];
+    char po_number[32];       /* "PO-0001", auto-generated */
+    char status[16];          /* "brouillon","commande","recu_partiel","recu","annule" */
+    char reference[64];
+    int  created_by;
+    char created_by_name[64];
+    char created_at[32];
+    char received_at[32];     /* empty until status becomes "recu" */
+} PurchaseOrder;
+
+typedef struct {
+    int    id;
+    int    po_id;
+    int    product_id;
+    char   product_name[128];
+    char   product_sku[64];
+    int    quantity_ordered;
+    int    quantity_received;
+    double unit_cost;
+} PurchaseOrderItem;
+
+bool db_create_purchase_order(WmsDb *db, int supplier_id, int created_by,
+                               const char *reference, int *out_po_id,
+                               char *err_out, size_t err_len);
+bool db_add_po_item(WmsDb *db, int po_id, int product_id, int quantity_ordered,
+                    double unit_cost, char *err_out, size_t err_len);
+int  db_list_purchase_orders(WmsDb *db, PurchaseOrder *out, int max_count);
+int  db_get_po_items(WmsDb *db, int po_id, PurchaseOrderItem *out, int max_count);
+bool db_update_po_item_received(WmsDb *db, int po_item_id, int new_received_qty,
+                                 char *err_out, size_t err_len);
+bool db_update_po_status(WmsDb *db, int po_id, const char *new_status);
+
+
 #endif

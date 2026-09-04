@@ -901,3 +901,37 @@ bool inv_restore_database(WmsDb *db, const char *backup_path, char *err_out, siz
     }
     return true;
 }
+
+
+bool inv_receive_po_item(int po_id, int po_item_id, int product_id,
+                          int already_received, int new_received_qty,
+                          const char *po_number, const Session *session,
+                          char *err_out, size_t err_len) {
+    int delta = new_received_qty - already_received;
+    if (delta <= 0) {
+        set_err(err_out, err_len, "La quantite recue doit augmenter");
+        return false;
+    }
+
+    if (!inv_post_movement(product_id, 1, delta, MV_RECEPTION, po_number, session,
+                            "Reception fournisseur", err_out, err_len)) {
+        return false;
+    }
+
+    if (!db_update_po_item_received(g_db, po_item_id, new_received_qty, err_out, err_len))
+        return false;
+
+    /* Recompute the PO's overall status from every one of its items. */
+    PurchaseOrderItem items[256];
+    int count = db_get_po_items(g_db, po_id, items, 256);
+    bool all_received = (count > 0);
+    bool any_received = false;
+    for (int i = 0; i < count; i++) {
+        if (items[i].quantity_received > 0) any_received = true;
+        if (items[i].quantity_received < items[i].quantity_ordered) all_received = false;
+    }
+    const char *new_status = all_received ? "recu" : (any_received ? "recu_partiel" : "commande");
+    db_update_po_status(g_db, po_id, new_status);
+
+    return true;
+}

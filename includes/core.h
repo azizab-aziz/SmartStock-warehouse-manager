@@ -130,4 +130,13 @@ bool inv_export_product_info_csv(int product_id, const char *path, char *err_out
  * Reference,Utilisateur,Raison) - feeds the PDF sheet's history table. */
 bool inv_export_movements_csv(int product_id, const char *path, int max_results,
                                char *err_out, size_t err_len);
+/* Receives (fully or partially) one purchase-order line item: posts an
+ * MV_RECEPTION stock movement for the newly-received delta (the atomic,
+ * audited path - same inv_post_movement everything else uses), updates
+ * the item's quantity_received, and auto-updates the parent PO's status
+ * to "commande" / "recu_partiel" / "recu" based on all its items. */
+bool inv_receive_po_item(int po_id, int po_item_id, int product_id,
+                          int already_received, int new_received_qty,
+                          const char *po_number, const Session *session,
+                          char *err_out, size_t err_len);
 #endif
