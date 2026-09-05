@@ -2226,28 +2226,10 @@ void gui_run(WmsDb *db) {
                 panel = PANEL_MOVEMENT_HISTORY;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-               tx += 120 + btn_gap;
+        tx += 120 + btn_gap;
 
-        toolbar_wrap(&tx, &toolbar_y, 100, sx, sh);
-        if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Modifier")&& !modal_active) {
-            Product *p = find_product_by_id(all_products, total_products, selected_product_id);
-            if (p) {
-                edit_product_id = p->id;
-                edit_product_version = p->version;
-                snprintf(e_name, sizeof e_name, "%s", p->name);
-                snprintf(e_price, sizeof e_price, "%.2f", p->unit_price);
-                snprintf(e_threshold, sizeof e_threshold, "%d", p->alert_threshold);
-                e_category_id = p->category_id;
-                snprintf(e_category, sizeof e_category, "%s", p->category);
-                snprintf(e_unit, sizeof e_unit, "%s", p->unit[0] ? p->unit : "piece");
-                panel = PANEL_EDIT_PRODUCT;
-                ee_name = true; ee_price = ee_threshold = false;
-            } else toast_show(&toast, "Selectionnez un produit d'abord", true);
-        }
-        tx += 100 + btn_gap;
-
-        toolbar_wrap(&tx, &toolbar_y, 100, sx, sh);
-        if (GuiButton((Rectangle){ tx, toolbar_y, 100, sh }, "Archiver")) {
+        toolbar_wrap(&tx, &toolbar_y, 110, sx, sh);
+        if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Archiver")) {
             Product *p = find_product_by_id(all_products, total_products, selected_product_id);
             if (p) {
                 edit_product_id = p->id;
@@ -2292,12 +2274,14 @@ void gui_run(WmsDb *db) {
         /* Table header */
         int table_x = 20, ty = toolbar_y + sh + 24;
         int col_sku = table_x, col_name = table_x + 110, col_cat = table_x + 380,
-           col_qty = table_x + 540, col_price = table_x + 640, col_alert = table_x + 760;
+           col_qty = table_x + 540, col_price = table_x + 640, col_unit = table_x + 720,
+           col_alert = table_x + 820;
         AppText("SKU", col_sku, ty, 14, DARKGRAY);
         AppText("Nom", col_name, ty, 14, DARKGRAY);
         AppText("Categorie", col_cat, ty, 14, DARKGRAY);
         AppText("Qte", col_qty, ty, 14, DARKGRAY);
         AppText("Prix", col_price, ty, 14, DARKGRAY);
+        AppText("Unite", col_unit, ty, 14, DARKGRAY);
         AppText("Statut", col_alert, ty, 14, DARKGRAY);
         int row_y = ty + 32;
         int start = page * PAGE_SIZE;
@@ -2329,6 +2313,8 @@ void gui_run(WmsDb *db) {
             char price_buf[24];
             snprintf(price_buf, sizeof price_buf, "%.2f", p->unit_price);
             DrawText(price_buf, col_price, row_y, 14, BLACK);
+
+            DrawText(p->unit[0] ? p->unit : "-", col_unit, row_y, 14, BLACK);
 
                         if (p->total_quantity <= p->alert_threshold) {
                 DrawText("STOCK FAIBLE", col_alert, row_y, 12, (Color){ 200, 40, 40, 255 });
