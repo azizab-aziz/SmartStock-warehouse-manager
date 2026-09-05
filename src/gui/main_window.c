@@ -550,8 +550,9 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
 
     bool modal_active = (*cat_screen_panel != PANEL_NONE);
 
-       /* Search bar */
+    /* Search bar */
     int sx = 20, sy = 94, sw = 400, sh = 32;
+    GuiLabel((Rectangle){ sx, sy - 20, 300, 18 }, "Rechercher une categorie");
     if (GuiTextBox((Rectangle){ sx, sy, sw, sh }, cat_search, 128, *cat_search_edit) && !modal_active)
         *cat_search_edit = !*cat_search_edit;
 
@@ -559,7 +560,7 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     above. Searches every product regardless of category, and shows
     which category each result belongs to. */
     int gsx = sx, gsy = sy + sh + 34;
-    GuiLabel((Rectangle){ gsx, gsy - 20, 300, 18 }, "Rechercher un produit (toutes categories)");
+    GuiLabel((Rectangle){ gsx, gsy - 20, 320, 18 }, "Rechercher un produit : toutes categories");
     if (GuiTextBox((Rectangle){ gsx, gsy, sw, sh }, global_search, 128, *global_search_edit) && !modal_active)
         *global_search_edit = !*global_search_edit;
 
