@@ -2274,8 +2274,8 @@ void gui_run(WmsDb *db) {
         /* Table header */
         int table_x = 20, ty = toolbar_y + sh + 24;
         int col_sku = table_x, col_name = table_x + 110, col_cat = table_x + 380,
-           col_qty = table_x + 540, col_price = table_x + 640, col_unit = table_x + 720,
-           col_alert = table_x + 820;
+           col_qty = table_x + 540, col_price = table_x + 640, col_unit = table_x + 710,
+           col_alert = table_x + 790;
         AppText("SKU", col_sku, ty, 14, DARKGRAY);
         AppText("Nom", col_name, ty, 14, DARKGRAY);
         AppText("Categorie", col_cat, ty, 14, DARKGRAY);
