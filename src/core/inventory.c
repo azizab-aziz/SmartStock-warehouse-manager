@@ -579,7 +579,7 @@ bool inv_export_csv(int category_id, const char *path, char *err_out, size_t err
        The Python script's utf-8-sig reader already strips this correctly. */
     fputc(0xEF, f); fputc(0xBB, f); fputc(0xBF, f);
 
-        fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\r\n");
+    fprintf(f, "PRD,SKU,Nom,Categorie,Unite,Quantite,Prix_Unitaire,Valeur_Stock,Seuil_Alerte,Statut\r\n");
 
     /* Snapshot + sort by category so the report always reflects exactly
      * what's currently active (adds/restores/archives all included or
