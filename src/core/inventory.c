@@ -13,6 +13,9 @@ static int         g_product_count = 0;
 #define WMS_MAX_CATEGORIES 256
 static Category g_categories[WMS_MAX_CATEGORIES];
 static int       g_category_count = 0;
+#define WMS_MAX_LOCATIONS 512
+static Location g_locations[WMS_MAX_LOCATIONS];
+static int      g_location_count = 0;
 static HashTable   g_by_sku;
 static HashTable   g_by_barcode;
 #define WMS_MAX_ARCHIVED 4096
@@ -101,8 +104,7 @@ bool inv_init(WmsDb *db) {
         refresh_product_total(g_products[i].id);
 
     g_category_count = db_list_categories(g_db, g_categories, WMS_MAX_CATEGORIES);
-
-
+    g_location_count = db_list_locations(g_db, g_locations, WMS_MAX_LOCATIONS);
 
     return true;
 }
@@ -114,6 +116,15 @@ int inv_get_categories(Category **out) {
 
 void inv_refresh_categories(WmsDb *db) {
     g_category_count = db_list_categories(db, g_categories, WMS_MAX_CATEGORIES);
+}
+
+int inv_get_locations(Location **out) {
+    *out = g_locations;
+    return g_location_count;
+}
+
+void inv_refresh_locations(WmsDb *db) {
+    g_location_count = db_list_locations(db, g_locations, WMS_MAX_LOCATIONS);
 }
 
 void inv_shutdown(void) {

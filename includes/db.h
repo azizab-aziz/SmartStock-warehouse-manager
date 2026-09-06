@@ -52,6 +52,15 @@ typedef struct {
     char name[64];
 } Category;
 
+typedef struct {
+    int  id;
+    char code[16];   /* e.g. "A-01-02" */
+    char aisle[16];
+    char shelf[16];
+    char bin[16];
+    int  capacity;
+} Location;
+
 int  db_list_categories(WmsDb *db, Category *out, int max_count);
 bool db_find_or_create_category(WmsDb *db, const char *name, int *out_id);
 
@@ -61,6 +70,10 @@ int  db_list_users(WmsDb *db, int *out_ids, char names[][64], char roles[][16], 
 bool db_update_user_role(WmsDb *db, int user_id, const char *new_role);
 
 bool db_update_category_name(WmsDb *db, int category_id, const char *new_name);
+
+int  db_list_locations(WmsDb *db, Location *out, int max_count);
+bool db_create_location(WmsDb *db, const char *code, const char *aisle, const char *shelf,
+                         const char *bin, int capacity, char *err_out, size_t err_len);
 
 typedef struct {
     int  id;

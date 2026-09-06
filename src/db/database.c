@@ -543,3 +543,43 @@ bool db_update_po_status(WmsDb *db, int po_id, const char *new_status) {
     sqlite3_finalize(st);
     return ok;
 }
+
+int db_list_locations(WmsDb *db, Location *out, int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT id, code, aisle, shelf, bin, capacity FROM locations ORDER BY code COLLATE NOCASE;",
+        -1, &st, NULL);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        out[n].id = sqlite3_column_int(st, 0);
+        snprintf(out[n].code, sizeof out[n].code, "%s", (const char*)sqlite3_column_text(st, 1));
+        snprintf(out[n].aisle, sizeof out[n].aisle, "%s", (const char*)sqlite3_column_text(st, 2));
+        snprintf(out[n].shelf, sizeof out[n].shelf, "%s", (const char*)sqlite3_column_text(st, 3));
+        snprintf(out[n].bin, sizeof out[n].bin, "%s", (const char*)sqlite3_column_text(st, 4));
+        out[n].capacity = sqlite3_column_int(st, 5);
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+bool db_create_location(WmsDb *db, const char *code, const char *aisle, const char *shelf,
+                         const char *bin, int capacity, char *err_out, size_t err_len) {
+    if (!code[0] || !aisle[0] || !shelf[0] || !bin[0]) {
+        snprintf(err_out, err_len, "Code, allee, etagere et bac sont obligatoires");
+        return false;
+    }
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO locations (code, aisle, shelf, bin, capacity) VALUES (?,?,?,?,?);",
+        -1, &st, NULL);
+    sqlite3_bind_text(st, 1, code, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, aisle, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, shelf, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 4, bin, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 5, capacity);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle)); /* e.g. UNIQUE constraint on code */
+    sqlite3_finalize(st);
+    return ok;
+}

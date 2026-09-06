@@ -303,7 +303,7 @@ typedef enum { PANEL_NONE, PANEL_ADD_PRODUCT, PANEL_MOVEMENT,
                PANEL_EDIT_PRODUCT, PANEL_CONFIRM_DELETE_PRODUCT,
                PANEL_MANAGE_CATEGORIES, PANEL_CONFIRM_DELETE_CATEGORY,
                PANEL_MANAGE_USERS, PANEL_RENAME_CATEGORY,
-               PANEL_MOVEMENT_HISTORY } ActivePanel;
+               PANEL_MOVEMENT_HISTORY, PANEL_MANAGE_LOCATIONS } ActivePanel;
 
 /* Small helper: a message that fades out after ~1.5s, per the spec
  * ("Messages de succes avec fade-out apres chaque action"). */
@@ -1910,12 +1910,22 @@ void gui_run(WmsDb *db) {
     Category *all_categories;
     int total_categories = inv_get_categories(&all_categories);
 
+    Location *all_locations;
+    int total_locations = inv_get_locations(&all_locations);
+
     /* Movement form fields */
     char m_qty[16] = {0};
     char m_reason[128] = {0};
     bool edit_qty = false;
     bool edit_reason = false;
     int  movement_sign = 1; /* +1 in, -1 out */
+    int  m_location_id = 1; /* defaults to the always-seeded A-01-01 location */
+    bool loc_dropdown_open = false;
+    Rectangle loc_field_rect = {0};
+
+    /* Manage-locations panel: add-new-location form */
+    char loc_code[16] = {0}, loc_aisle[16] = {0}, loc_shelf[16] = {0}, loc_bin[16] = {0}, loc_capacity[16] = {0};
+    bool le_code=false, le_aisle=false, le_shelf=false, le_bin=false, le_capacity=false;
 
     /* Movement history panel state */
     Movement mv_history[64];
@@ -2215,7 +2225,10 @@ void gui_run(WmsDb *db) {
 
         toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Mouvement stock")) {
-            if (selected_product_id > 0) { panel = PANEL_MOVEMENT; m_qty[0] = '\0'; m_reason[0] = '\0'; }
+            if (selected_product_id > 0) {
+                panel = PANEL_MOVEMENT; m_qty[0] = '\0'; m_reason[0] = '\0';
+                m_location_id = 1; loc_dropdown_open = false;
+            }
             else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
                 tx += 140 + btn_gap;
@@ -2237,13 +2250,19 @@ void gui_run(WmsDb *db) {
                 panel = PANEL_CONFIRM_DELETE_PRODUCT;
             } else toast_show(&toast, "Selectionnez un produit d'abord", true);
         }
-                tx += 110 + btn_gap;
+        tx += 110 + btn_gap;
 
         toolbar_wrap(&tx, &toolbar_y, 150, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 150, sh }, "Gerer categories")&& !modal_active) {
             panel = PANEL_MANAGE_CATEGORIES;
         }
         tx += 150 + btn_gap;
+
+        toolbar_wrap(&tx, &toolbar_y, 160, sx, sh);
+        if (GuiButton((Rectangle){ tx, toolbar_y, 160, sh }, "Gerer emplacements")&& !modal_active) {
+            panel = PANEL_MANAGE_LOCATIONS;
+        }
+        tx += 160 + btn_gap;
 
         toolbar_wrap(&tx, &toolbar_y, 130, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 130, sh }, "Statistiques")&& !modal_active) {
@@ -2870,7 +2889,7 @@ void gui_run(WmsDb *db) {
         Product *movement_product = find_product_by_id(all_products, total_products, selected_product_id);
         if (panel == PANEL_MOVEMENT && movement_product != NULL) {
             Product *p = movement_product;
-                       Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 165, 400, 320 };
+            Rectangle box = { GetScreenWidth()/2 - 200, GetScreenHeight()/2 - 190, 400, 370 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, TextFormat("Mouvement - %s", p->name));
 
@@ -2878,14 +2897,33 @@ void gui_run(WmsDb *db) {
             DrawText(TextFormat("Stock actuel: %d %s", p->total_quantity, p->unit), bx, by, 14, DARKGRAY);
             by += 30;
 
-            if (GuiButton((Rectangle){ bx, by, 90, 30 }, movement_sign > 0 ? "[Entree]" : "Entree"))
+                        if (GuiButton((Rectangle){ bx, by, 90, 30 }, movement_sign > 0 ? "[Entree]" : "Entree"))
                 movement_sign = 1;
             if (GuiButton((Rectangle){ bx + 100, by, 90, 30 }, movement_sign < 0 ? "[Sortie]" : "Sortie"))
                 movement_sign = -1;
 
-                        if (!edit_qty && !edit_reason) edit_qty = true; /* default focus */
+            by += 40;
+            GuiLabel((Rectangle){ bx, by, 90, 24 }, "Emplacement");
+            loc_field_rect = (Rectangle){ bx + 100, by, 220, 24 };
+            bool loc_hover = CheckCollisionPointRec(GetMousePosition(), loc_field_rect);
+            DrawRectangleRec(loc_field_rect, WHITE);
+            DrawRectangleLinesEx(loc_field_rect, 1, loc_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+            const char *loc_display = "Emplacement inconnu";
+            for (int li = 0; li < total_locations; li++)
+                if (all_locations[li].id == m_location_id) { loc_display = all_locations[li].code; break; }
+            AppText(loc_display, loc_field_rect.x + 8, loc_field_rect.y + 5, 13, (Color){30,41,59,255});
+            AppText(loc_dropdown_open ? "^" : "v",
+                     loc_field_rect.x + loc_field_rect.width - 18, loc_field_rect.y + 5, 13, COLOR_TEXT_MUTED);
+            if (loc_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                loc_dropdown_open = !loc_dropdown_open;
+                edit_qty = edit_reason = false;
+            }
+
+                        if (!edit_qty && !edit_reason && !loc_dropdown_open) edit_qty = true; /* default focus */
             bool *movement_fields[2] = { &edit_qty, &edit_reason };
-            NavResult movement_nav = nav_handle_focus(movement_fields, 2);
+            NavResult movement_nav = loc_dropdown_open
+                ? (NavResult){ false, false }
+                : nav_handle_focus(movement_fields, 2);
 
             by += 40;
             GuiLabel((Rectangle){ bx, by, 90, 24 }, "Quantite");
@@ -2901,28 +2939,139 @@ void gui_run(WmsDb *db) {
                 if (edit_reason) edit_qty = false;
             }
 
+                        by += 50;
+            if (!loc_dropdown_open) {
+                if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Valider") || movement_nav.submit) {
+                    if (!str_is_integer(m_qty) || atoi(m_qty) <= 0) {
+                        toast_show(&toast, "Quantite invalide (nombre entier positif requis)", true);
+                    } else {
+                        int qty = atoi(m_qty);
+                        char err[256];
+                        bool ok = inv_post_movement(p->id, m_location_id, movement_sign * qty,
+                                    movement_sign > 0 ? MV_RECEPTION : MV_EXPEDITION,
+                                    "GUI", &g_session, m_reason, err, sizeof err);
+                        if (ok) {
+                            toast_show(&toast, "Mouvement enregistre", false);
+                            panel = PANEL_NONE;
+                        } else {
+                            toast_show(&toast, err, true);
+                        }
+                    }
+                }
+                if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Annuler")) panel = PANEL_NONE;
+            }
+
+            /* Location dropdown - drawn last so it overlays whatever's
+               below it (Quantite, Raison, Valider), same pattern as the
+               category/unit dropdowns elsewhere in this file. */
+            if (loc_dropdown_open) {
+                float row_h = 26;
+                Rectangle dd = { loc_field_rect.x, loc_field_rect.y + loc_field_rect.height + 2,
+                                  loc_field_rect.width, row_h * (total_locations > 0 ? total_locations : 1) };
+                DrawRectangleRec(dd, WHITE);
+                DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+                if (total_locations == 0) {
+                    AppText("Aucun emplacement defini", dd.x + 8, dd.y + 5, 13, COLOR_TEXT_MUTED);
+                }
+                for (int li = 0; li < total_locations; li++) {
+                    Rectangle row = { dd.x, dd.y + li * row_h, dd.width, row_h };
+                    bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                    bool selected = (m_location_id == all_locations[li].id);
+                    if (hover || selected) DrawRectangleRec(row, (Color){239,246,255,255});
+                    char row_label[64];
+                    snprintf(row_label, sizeof row_label, "%s (allee %s, etagere %s, bac %s)",
+                             all_locations[li].code, all_locations[li].aisle,
+                             all_locations[li].shelf, all_locations[li].bin);
+                    AppText(row_label, row.x + 8, row.y + 5, 12, (Color){30,41,59,255});
+                    if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        m_location_id = all_locations[li].id;
+                        loc_dropdown_open = false;
+                    }
+                }
+            }
+        }
+
+               /* ---- Manage locations panel ---- */
+        if (panel == PANEL_MANAGE_LOCATIONS) {
+            Rectangle box = { GetScreenWidth()/2 - 280, GetScreenHeight()/2 - 260, 560, 520 };
+            DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+            GuiPanel(box, "Gerer les emplacements");
+
+            float bx = box.x + 20, by = box.y + 40;
+            AppTextBold("Emplacements existants", bx, by, 14, (Color){30,41,59,255});
+            by += 26;
+
+            if (total_locations == 0) {
+                AppText("Aucun emplacement pour le moment.", bx, by, 13, COLOR_TEXT_MUTED);
+                by += 24;
+            }
+            for (int li = 0; li < total_locations && li < 6; li++) {
+                Location *loc = &all_locations[li];
+                char row_label[128];
+                snprintf(row_label, sizeof row_label, "%s - allee %s, etagere %s, bac %s (capacite %d)",
+                         loc->code, loc->aisle, loc->shelf, loc->bin, loc->capacity);
+                AppText(row_label, bx, by, 13, (Color){30,41,59,255});
+                by += 24;
+            }
+            if (total_locations > 6) {
+                char more[64];
+                snprintf(more, sizeof more, "+ %d autre(s) non affiche(s)", total_locations - 6);
+                AppText(more, bx, by, 12, COLOR_TEXT_MUTED);
+                by += 24;
+            }
+
+            by += 16;
+            AppTextBold("Ajouter un emplacement", bx, by, 14, (Color){30,41,59,255});
+            by += 30;
+
+            bool *loc_flags[5] = { &le_code, &le_aisle, &le_shelf, &le_bin, &le_capacity };
+            bool any_loc_focused = le_code || le_aisle || le_shelf || le_bin || le_capacity;
+            if (!any_loc_focused) le_code = true;
+            NavResult loc_nav = nav_handle_focus(loc_flags, 5);
+
+            GuiLabel((Rectangle){ bx, by, 90, 24 }, "Code");
+            if (GuiTextBox((Rectangle){ bx + 100, by, 150, 24 }, loc_code, sizeof loc_code, le_code) && !loc_nav.moved) {
+                le_code = !le_code; if (le_code) { le_aisle=le_shelf=le_bin=le_capacity=false; }
+            }
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 90, 24 }, "Allee");
+            if (GuiTextBox((Rectangle){ bx + 100, by, 150, 24 }, loc_aisle, sizeof loc_aisle, le_aisle) && !loc_nav.moved) {
+                le_aisle = !le_aisle; if (le_aisle) { le_code=le_shelf=le_bin=le_capacity=false; }
+            }
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 90, 24 }, "Etagere");
+            if (GuiTextBox((Rectangle){ bx + 100, by, 150, 24 }, loc_shelf, sizeof loc_shelf, le_shelf) && !loc_nav.moved) {
+                le_shelf = !le_shelf; if (le_shelf) { le_code=le_aisle=le_bin=le_capacity=false; }
+            }
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 90, 24 }, "Bac");
+            if (GuiTextBox((Rectangle){ bx + 100, by, 150, 24 }, loc_bin, sizeof loc_bin, le_bin) && !loc_nav.moved) {
+                le_bin = !le_bin; if (le_bin) { le_code=le_aisle=le_shelf=le_capacity=false; }
+            }
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 90, 24 }, "Capacite");
+            if (GuiTextBox((Rectangle){ bx + 100, by, 150, 24 }, loc_capacity, sizeof loc_capacity, le_capacity) && !loc_nav.moved) {
+                le_capacity = !le_capacity; if (le_capacity) { le_code=le_aisle=le_shelf=le_bin=false; }
+            }
+
             by += 50;
-            if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Valider") || movement_nav.submit) {
-                if (!str_is_integer(m_qty) || atoi(m_qty) <= 0) {
-                    toast_show(&toast, "Quantite invalide (nombre entier positif requis)", true);
+            if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Ajouter") || loc_nav.submit) {
+                if (!str_is_integer(loc_capacity[0] ? loc_capacity : "0")) {
+                    toast_show(&toast, "Capacite invalide", true);
                 } else {
-                    int qty = atoi(m_qty);
-                    /* NOTE: location_id=1 placeholder - a real build wires
-                       this to a location picker; the atomic-update logic
-                       itself (inv_post_movement) is what matters here. */
                     char err[256];
-                    bool ok = inv_post_movement(p->id, 1, movement_sign * qty,
-                                movement_sign > 0 ? MV_RECEPTION : MV_EXPEDITION,
-                                "GUI", &g_session, m_reason, err, sizeof err);
-                    if (ok) {
-                        toast_show(&toast, "Mouvement enregistre", false);
-                        panel = PANEL_NONE;
+                    if (db_create_location(db, loc_code, loc_aisle, loc_shelf, loc_bin,
+                                            atoi(loc_capacity[0] ? loc_capacity : "0"), err, sizeof err)) {
+                        inv_refresh_locations(db);
+                        total_locations = inv_get_locations(&all_locations);
+                        toast_show(&toast, "Emplacement ajoute", false);
+                        loc_code[0]=loc_aisle[0]=loc_shelf[0]=loc_bin[0]=loc_capacity[0]='\0';
                     } else {
                         toast_show(&toast, err, true);
                     }
                 }
             }
-                       if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Annuler")) panel = PANEL_NONE;
+            if (GuiButton((Rectangle){ bx + 150, by, 130, 32 }, "Fermer")) panel = PANEL_NONE;
         }
 
         /* ---- Movement history panel ---- */

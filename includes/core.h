@@ -27,14 +27,7 @@ typedef struct {
                                     dashboard reads without a JOIN */
 } Product;
 
-typedef struct {
-    int  id;
-    char code[16];   /* A-01-02 */
-    char aisle[16];
-    char shelf[16];
-    char bin[16];
-    int  capacity;
-} Location;
+
 typedef struct {
     int    id;
     int    product_id;
@@ -97,6 +90,8 @@ int inv_all_products(Product **out_array); /* returns count, *out_array points a
 
 int  inv_get_categories(Category **out);
 void inv_refresh_categories(WmsDb *db);
+int  inv_get_locations(Location **out);
+void inv_refresh_locations(WmsDb *db);
 
 /* Deletes a category only if no product currently references it (cascade
  * safety). On refusal, err_out lists how many products are still linked. */
