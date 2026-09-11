@@ -631,12 +631,6 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 160, sh }, "Inventaire physique") && !modal_active) {
         g_screen = SCREEN_STOCK_TAKE;
     }
-    cat_tx += 140 + cat_btn_gap;
-
-    toolbar_wrap(&cat_tx, &cat_toolbar_y, 140, sx, sh);
-    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 140, sh }, "Commandes") && !modal_active) {
-        g_screen = SCREEN_PURCHASE_ORDERS;
-    }
 
     /* Alphabetical list (already sorted by db_list_categories via
        ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
