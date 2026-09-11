@@ -35,7 +35,7 @@ static const char *UNIT_OPTIONS[] = { "piece", "boite", "kg", "litre" };
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS, SCREEN_BACKUP, SCREEN_SUPPLIERS, SCREEN_PURCHASE_ORDERS, SCREEN_PO_DETAIL } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS, SCREEN_BACKUP, SCREEN_SUPPLIERS, SCREEN_PURCHASE_ORDERS, SCREEN_PO_DETAIL, SCREEN_STOCK_TAKE } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -622,8 +622,14 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     }
 
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 140, sx, sh);
-    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 140, sh }, "Fournisseurs") && !modal_active) {
-        g_screen = SCREEN_SUPPLIERS;
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 140, sh }, "Commandes") && !modal_active) {
+        g_screen = SCREEN_PURCHASE_ORDERS;
+    }
+    cat_tx += 140 + cat_btn_gap;
+
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 160, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 160, sh }, "Inventaire physique") && !modal_active) {
+        g_screen = SCREEN_STOCK_TAKE;
     }
     cat_tx += 140 + cat_btn_gap;
 
@@ -1809,7 +1815,195 @@ static void draw_po_detail_screen(WmsDb *db, Toast *toast) {
                 }
             }
         }
-        if (GuiButton((Rectangle){bx+150,by,130,32}, "Annuler")) show_receive = false;
+                if (GuiButton((Rectangle){bx+150,by,130,32}, "Annuler")) show_receive = false;
+    }
+}
+
+/* Physical stock count / adjustment. Lists every active product with its
+ * currently-recorded quantity; "Compter" opens a modal where you enter
+ * what you actually counted at a given location. On confirm, the
+ * difference is posted as a real, audited movement (MV_ADJUST_POS if you
+ * counted more than recorded, MV_ADJUST_NEG if less) through the exact
+ * same inv_post_movement() path every other stock change uses - so
+ * adjustments show up in Historique/Journal d'audit like anything else. */
+static void draw_stock_take_screen(WmsDb *db, Product *all_products, int total_products, Toast *toast) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Inventaire physique / ajustement de stock", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+
+    static char search[128] = {0};
+    static bool search_edit = false;
+
+    static bool show_modal = false;
+    static int  count_product_id = 0;
+    static char count_product_name[128] = {0};
+    static int  count_current_qty = 0;
+    static char f_counted[16] = {0};
+    static char f_reason[128] = {0};
+    static bool e_counted = false, e_reason = false;
+    static int  count_location_id = 1;
+    static bool count_loc_dropdown_open = false;
+    static Rectangle count_loc_field_rect = {0};
+
+    bool modal_active = show_modal;
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !modal_active) {
+        g_screen = SCREEN_CATEGORIES;
+        return;
+    }
+
+    int sx = 20, sy = 100, sh = 32;
+    GuiLabel((Rectangle){ sx, sy - 20, 300, 18 }, "Rechercher un produit");
+    if (GuiTextBox((Rectangle){ sx, sy, 400, sh }, search, sizeof search, search_edit) && !modal_active)
+        search_edit = !search_edit;
+
+    int row_y = sy + sh + 30;
+    AppTextBold("SKU", sx, row_y, 13, DARKGRAY);
+    AppTextBold("Nom", sx+120, row_y, 13, DARKGRAY);
+    AppTextBold("Categorie", sx+380, row_y, 13, DARKGRAY);
+    AppTextBold("Qte enregistree", sx+560, row_y, 13, DARKGRAY);
+    row_y += 28;
+
+    int shown = 0;
+    for (int i = 0; i < total_products; i++) {
+        Product *p = &all_products[i];
+        if (search[0] && !ci_str_contains(p->name, search) && !ci_str_contains(p->sku, search)) continue;
+        shown++;
+
+        Rectangle row_rect = { sx, row_y - 4, GetScreenWidth() - 2*sx, 30 };
+        bool hover = CheckCollisionPointRec(GetMousePosition(), row_rect) && !modal_active;
+        if (hover) DrawRectangleRec(row_rect, (Color){235,240,248,255});
+        DrawLine(sx, row_y+26, GetScreenWidth()-sx, row_y+26, COLOR_BORDER);
+
+        AppText(p->sku, sx, row_y, 13, (Color){30,41,59,255});
+        AppText(p->name, sx+120, row_y, 13, (Color){30,41,59,255});
+        AppText(p->category[0] ? p->category : "-", sx+380, row_y, 13, (Color){30,41,59,255});
+        DrawText(TextFormat("%d %s", p->total_quantity, p->unit), sx+560, row_y, 13, BLACK);
+
+        Rectangle count_btn = { GetScreenWidth() - sx - 100, row_y - 4, 100, 26 };
+        bool count_hover = CheckCollisionPointRec(GetMousePosition(), count_btn) && !modal_active;
+        DrawRectangleRounded(count_btn, 0.2f, 4, count_hover ? (Color){29,78,216,255} : COLOR_ACCENT_BLUE);
+        AppText("Compter", count_btn.x + 18, count_btn.y + 5, 13, WHITE);
+        if (count_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            show_modal = true;
+            count_product_id = p->id;
+            snprintf(count_product_name, sizeof count_product_name, "%s", p->name);
+            count_current_qty = p->total_quantity;
+            snprintf(f_counted, sizeof f_counted, "%d", p->total_quantity);
+            f_reason[0] = '\0';
+            e_counted = true; e_reason = false;
+            count_location_id = 1;
+            count_loc_dropdown_open = false;
+        }
+
+        row_y += 34;
+    }
+    if (shown == 0) {
+        AppText(search[0] ? "Aucun produit ne correspond a cette recherche."
+                          : "Aucun produit actif.", sx, row_y, 14, COLOR_TEXT_MUTED);
+    }
+
+    /* ---- Count / adjust modal ---- */
+    if (show_modal) {
+        Location *all_locations;
+        int total_locations = inv_get_locations(&all_locations);
+
+        Rectangle box = { GetScreenWidth()/2 - 210, GetScreenHeight()/2 - 190, 420, 380 };
+        DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
+        GuiPanel(box, TextFormat("Comptage - %s", count_product_name));
+
+        float bx = box.x + 20, by = box.y + 40;
+        AppText(TextFormat("Quantite actuellement enregistree: %d", count_current_qty), bx, by, 14, DARKGRAY);
+
+        by += 34;
+        GuiLabel((Rectangle){ bx, by, 100, 24 }, "Emplacement");
+        count_loc_field_rect = (Rectangle){ bx + 110, by, 260, 24 };
+        bool loc_hover = CheckCollisionPointRec(GetMousePosition(), count_loc_field_rect);
+        DrawRectangleRec(count_loc_field_rect, WHITE);
+        DrawRectangleLinesEx(count_loc_field_rect, 1, count_loc_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+        const char *loc_display = "Emplacement inconnu";
+        for (int li = 0; li < total_locations; li++)
+            if (all_locations[li].id == count_location_id) { loc_display = all_locations[li].code; break; }
+        AppText(loc_display, count_loc_field_rect.x + 8, count_loc_field_rect.y + 5, 13, (Color){30,41,59,255});
+        AppText(count_loc_dropdown_open ? "^" : "v",
+                 count_loc_field_rect.x + count_loc_field_rect.width - 18, count_loc_field_rect.y + 5, 13, COLOR_TEXT_MUTED);
+        if (loc_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            count_loc_dropdown_open = !count_loc_dropdown_open;
+            e_counted = e_reason = false;
+        }
+
+        bool *flags[2] = { &e_counted, &e_reason };
+        NavResult nav = count_loc_dropdown_open ? (NavResult){false,false} : nav_handle_focus(flags, 2);
+
+        by += 40;
+        GuiLabel((Rectangle){ bx, by, 200, 24 }, "Quantite comptee (physique)");
+        if (GuiTextBox((Rectangle){ bx, by + 26, 120, 24 }, f_counted, sizeof f_counted, e_counted) && !nav.moved) {
+            e_counted = !e_counted; if (e_counted) e_reason = false;
+        }
+
+        by += 66;
+        GuiLabel((Rectangle){ bx, by, 200, 24 }, "Raison (ex: comptage annuel)");
+        if (GuiTextBox((Rectangle){ bx, by + 26, 370, 24 }, f_reason, sizeof f_reason, e_reason) && !nav.moved) {
+            e_reason = !e_reason; if (e_reason) e_counted = false;
+        }
+
+        by += 66;
+        if (!count_loc_dropdown_open) {
+            if (GuiButton((Rectangle){ bx, by, 160, 32 }, "Valider l'ajustement") || nav.submit) {
+                if (!str_is_integer(f_counted) || atoi(f_counted) < 0) {
+                    toast_show(toast, "Quantite comptee invalide", true);
+                } else {
+                    int counted = atoi(f_counted);
+                    int delta = counted - count_current_qty;
+                    if (delta == 0) {
+                        toast_show(toast, "Aucun ecart - rien a ajuster", false);
+                        show_modal = false;
+                    } else {
+                        char err[256];
+                        const char *reason = f_reason[0] ? f_reason : "Comptage d'inventaire";
+                        bool ok = inv_post_movement(count_product_id, count_location_id, delta,
+                                    delta > 0 ? MV_ADJUST_POS : MV_ADJUST_NEG,
+                                    "INVENTAIRE", &g_session, reason, err, sizeof err);
+                        if (ok) {
+                            toast_show(toast, TextFormat("Ajustement enregistre (%+d)", delta), false);
+                            show_modal = false;
+                        } else {
+                            toast_show(toast, err, true);
+                        }
+                    }
+                }
+            }
+            if (GuiButton((Rectangle){ bx + 180, by, 160, 32 }, "Annuler")) show_modal = false;
+        }
+
+        if (count_loc_dropdown_open) {
+            float row_h = 26;
+            Rectangle dd = { count_loc_field_rect.x, count_loc_field_rect.y + count_loc_field_rect.height + 2,
+                              count_loc_field_rect.width, row_h * (total_locations > 0 ? total_locations : 1) };
+            DrawRectangleRec(dd, WHITE);
+            DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+            if (total_locations == 0) {
+                AppText("Aucun emplacement defini", dd.x + 8, dd.y + 5, 13, COLOR_TEXT_MUTED);
+            }
+            for (int li = 0; li < total_locations; li++) {
+                Rectangle row = { dd.x, dd.y + li * row_h, dd.width, row_h };
+                bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                bool selected = (count_location_id == all_locations[li].id);
+                if (hover || selected) DrawRectangleRec(row, (Color){239,246,255,255});
+                AppText(all_locations[li].code, row.x + 8, row.y + 5, 13, (Color){30,41,59,255});
+                if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                    count_location_id = all_locations[li].id;
+                    count_loc_dropdown_open = false;
+                }
+            }
+        }
     }
 }
 
@@ -2080,6 +2274,14 @@ void gui_run(WmsDb *db) {
         if (g_screen == SCREEN_PO_DETAIL) {
             BeginDrawing();
             draw_po_detail_screen(db, &toast);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- stock take / adjustment screen ---- */
+        if (g_screen == SCREEN_STOCK_TAKE) {
+            BeginDrawing();
+            draw_stock_take_screen(db, all_products, total_products, &toast);
             EndDrawing();
             continue;
         }
