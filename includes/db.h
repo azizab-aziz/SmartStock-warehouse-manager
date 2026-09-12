@@ -71,6 +71,23 @@ bool db_update_user_role(WmsDb *db, int user_id, const char *new_role);
 
 bool db_update_category_name(WmsDb *db, int category_id, const char *new_name);
 
+typedef struct {
+    int  id;
+    int  user_id;
+    char username[64];    /* "systeme" if user_id <= 0, joined from users otherwise */
+    char action[32];      /* "creation","modification","suppression","restauration" */
+    char entity_type[32]; /* "produit","categorie","fournisseur","utilisateur","emplacement","commande" */
+    char entity_label[128];
+    char details[192];
+    char created_at[32];
+} AuditLogEntry;
+
+/* Writes one CRUD audit entry - separate from the movements table, which
+ * already covers stock changes on its own (see inv_get_all_movements). */
+bool db_log_audit(WmsDb *db, int user_id, const char *action, const char *entity_type,
+                   const char *entity_label, const char *details);
+int  db_list_audit_log(WmsDb *db, AuditLogEntry *out, int max_count);
+
 int  db_list_locations(WmsDb *db, Location *out, int max_count);
 bool db_create_location(WmsDb *db, const char *code, const char *aisle, const char *shelf,
                          const char *bin, int capacity, char *err_out, size_t err_len);

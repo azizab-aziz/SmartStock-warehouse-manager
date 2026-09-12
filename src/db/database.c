@@ -103,7 +103,7 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
         "  received_at TEXT"
         ");", NULL, NULL, NULL);
 
-    sqlite3_exec(db->handle,
+        sqlite3_exec(db->handle,
         "CREATE TABLE IF NOT EXISTS purchase_order_items ("
         "  id INTEGER PRIMARY KEY,"
         "  po_id INTEGER NOT NULL REFERENCES purchase_orders(id),"
@@ -111,6 +111,17 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
         "  quantity_ordered INTEGER NOT NULL,"
         "  quantity_received INTEGER NOT NULL DEFAULT 0,"
         "  unit_cost REAL NOT NULL DEFAULT 0"
+        ");", NULL, NULL, NULL);
+
+    sqlite3_exec(db->handle,
+        "CREATE TABLE IF NOT EXISTS audit_log ("
+        "  id INTEGER PRIMARY KEY,"
+        "  user_id INTEGER REFERENCES users(id),"
+        "  action TEXT NOT NULL,"
+        "  entity_type TEXT NOT NULL,"
+        "  entity_label TEXT NOT NULL,"
+        "  details TEXT,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
         ");", NULL, NULL, NULL);
 
     return true;
@@ -582,4 +593,44 @@ bool db_create_location(WmsDb *db, const char *code, const char *aisle, const ch
     if (!ok) snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle)); /* e.g. UNIQUE constraint on code */
     sqlite3_finalize(st);
     return ok;
+}
+
+bool db_log_audit(WmsDb *db, int user_id, const char *action, const char *entity_type,
+                   const char *entity_label, const char *details) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details) "
+        "VALUES (?,?,?,?,?);", -1, &st, NULL);
+    if (user_id > 0) sqlite3_bind_int(st, 1, user_id); else sqlite3_bind_null(st, 1);
+    sqlite3_bind_text(st, 2, action, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, entity_type, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 4, entity_label, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 5, details ? details : "", -1, SQLITE_TRANSIENT);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    return ok;
+}
+
+int db_list_audit_log(WmsDb *db, AuditLogEntry *out, int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT a.id, COALESCE(a.user_id,0), COALESCE(u.username,'systeme'), a.action, "
+        "a.entity_type, a.entity_label, COALESCE(a.details,''), a.created_at "
+        "FROM audit_log a LEFT JOIN users u ON u.id = a.user_id "
+        "ORDER BY a.created_at DESC, a.id DESC;", -1, &st, NULL);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        AuditLogEntry *e = &out[n++];
+        memset(e, 0, sizeof(*e));
+        e->id = sqlite3_column_int(st, 0);
+        e->user_id = sqlite3_column_int(st, 1);
+        snprintf(e->username, sizeof e->username, "%s", (const char*)sqlite3_column_text(st, 2));
+        snprintf(e->action, sizeof e->action, "%s", (const char*)sqlite3_column_text(st, 3));
+        snprintf(e->entity_type, sizeof e->entity_type, "%s", (const char*)sqlite3_column_text(st, 4));
+        snprintf(e->entity_label, sizeof e->entity_label, "%s", (const char*)sqlite3_column_text(st, 5));
+        snprintf(e->details, sizeof e->details, "%s", (const char*)sqlite3_column_text(st, 6));
+        snprintf(e->created_at, sizeof e->created_at, "%s", (const char*)sqlite3_column_text(st, 7));
+    }
+    sqlite3_finalize(st);
+    return n;
 }

@@ -35,7 +35,7 @@ static const char *UNIT_OPTIONS[] = { "piece", "boite", "kg", "litre" };
 
 #include "session.h"
 
-typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS, SCREEN_BACKUP, SCREEN_SUPPLIERS, SCREEN_PURCHASE_ORDERS, SCREEN_PO_DETAIL, SCREEN_STOCK_TAKE } Screen;
+typedef enum { SCREEN_SPLASH, SCREEN_LOGIN, SCREEN_CATEGORIES, SCREEN_MAIN, SCREEN_STATS, SCREEN_CATEGORY_STATS, SCREEN_AUDIT_LOG, SCREEN_ARCHIVED_PRODUCTS, SCREEN_STOCK_ALERTS, SCREEN_BACKUP, SCREEN_SUPPLIERS, SCREEN_PURCHASE_ORDERS, SCREEN_PO_DETAIL, SCREEN_STOCK_TAKE, SCREEN_CRUD_LOG } Screen;
 static Screen  g_screen = SCREEN_SPLASH;
 static int     g_active_category_id = 0;      /* 0 = "no filter" (unused once categories screen exists) */
 static char    g_active_category_name[64] = "";
@@ -631,6 +631,12 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 160, sh }, "Inventaire physique") && !modal_active) {
         g_screen = SCREEN_STOCK_TAKE;
     }
+    cat_tx += 160 + cat_btn_gap;
+
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Historique actions") && !modal_active) {
+        g_screen = SCREEN_CRUD_LOG;
+    }
 
     /* Alphabetical list (already sorted by db_list_categories via
        ORDER BY name COLLATE NOCASE) - filtered live by the search box. */
@@ -747,11 +753,13 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         bool confirm = GuiButton((Rectangle){ bx, by, 150, 32 }, "Ajouter") ||
                        (*cat_rename_edit && IsKeyPressed(KEY_ENTER));
         if (confirm) {
-            if (cat_rename_input[0] != '\0') {
+        if (cat_rename_input[0] != '\0') {
                 int new_id;
                 if (db_find_or_create_category(db, cat_rename_input, &new_id)) {
                     inv_refresh_categories(db);
                     *total_categories = inv_get_categories(&all_categories);
+                    db_log_audit(db, g_session.user_id, "creation", "categorie", cat_rename_input,
+                                 "Ajout ou selection (categorie peut deja exister)");
                     toast_show(toast, "Categorie ajoutee", false);
                 } else {
                     toast_show(toast, "Erreur lors de l'ajout", true);
@@ -774,10 +782,11 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         bool confirm = GuiButton((Rectangle){ bx, by, 150, 32 }, "Enregistrer") ||
                        (*cat_rename_edit && IsKeyPressed(KEY_ENTER));
         if (confirm) {
-            if (cat_rename_input[0] != '\0' &&
+        if (cat_rename_input[0] != '\0' &&
                 db_update_category_name(db, *cat_action_id, cat_rename_input)) {
                 inv_refresh_categories(db);
                 *total_categories = inv_get_categories(&all_categories);
+                db_log_audit(db, g_session.user_id, "modification", "categorie", cat_rename_input, "Renommage");
                 toast_show(toast, "Categorie renommee", false);
             } else {
                 toast_show(toast, "Erreur lors du renommage", true);
@@ -800,10 +809,15 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         AppText("Supprimer cette categorie ?", bx, by, 14, (Color){30,41,59,255});
 
         by += 40;
-        if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, supprimer")) {
+    if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, supprimer")) {
             char err[256];
+            char deleted_cat_name[64] = "";
+            for (int ci2 = 0; ci2 < *total_categories; ci2++)
+                if (all_categories[ci2].id == *cat_action_id)
+                    snprintf(deleted_cat_name, sizeof deleted_cat_name, "%s", all_categories[ci2].name);
             if (inv_delete_category(*cat_action_id, &g_session, err, sizeof err)) {
                 *total_categories = inv_get_categories(&all_categories);
+                db_log_audit(db, g_session.user_id, "suppression", "categorie", deleted_cat_name, NULL);
                 toast_show(toast, "Categorie supprimee", false);
             } else {
                 toast_show(toast, err, true);
@@ -839,6 +853,9 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
 
                 if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT) && !is_current) {
                     if (db_update_user_role(db, mgmt_user_ids[ui], roles[ri])) {
+                        char detail[80];
+                        snprintf(detail, sizeof detail, "Nouveau role: %s", roles[ri]);
+                        db_log_audit(db, g_session.user_id, "modification", "utilisateur", mgmt_user_names[ui], detail);
                         snprintf(mgmt_user_roles[ui], 16, "%s", roles[ri]);
                         toast_show(toast, "Role mis a jour", false);
                     } else {
@@ -1097,7 +1114,7 @@ static void draw_audit_log_screen(void) {
  * is ever truly gone. Fetched fresh each frame, same style as the stats
  * screens. Restoring re-adds it to the active in-memory index, so the
  * caller's total_products must be refreshed afterward. */
-static void draw_archived_products_screen(Product **all_products_ptr, int *total_products_ptr, Toast *toast) {
+static void draw_archived_products_screen(WmsDb *db, Product **all_products_ptr, int *total_products_ptr, Toast *toast) {
     ClearBackground((Color){ 245, 247, 250, 255 });
 
     DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
@@ -1145,6 +1162,7 @@ static void draw_archived_products_screen(Product **all_products_ptr, int *total
             char err[256];
             if (inv_restore_product(p->id, err, sizeof err)) {
                 *total_products_ptr = inv_all_products(all_products_ptr);
+                db_log_audit(db, g_session.user_id, "restauration", "produit", p->name, NULL);
                 toast_show(toast, "Produit restaure - assignez-lui une categorie via Modifier", false);
             } else {
                 toast_show(toast, err, true);
@@ -1438,12 +1456,11 @@ static void draw_suppliers_screen(WmsDb *db, Toast *toast) {
         AppText("Suppr.", del_btn.x+16, del_btn.y+6, 13, (Color){185,28,28,255});
         if (del_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
             char err[256];
-            if (db_delete_supplier(db, s->id, err, sizeof err)) toast_show(toast, "Fournisseur supprime", false);
-            else toast_show(toast, err, true);
+            if (db_delete_supplier(db, s->id, err, sizeof err)) {
+                db_log_audit(db, g_session.user_id, "suppression", "fournisseur", s->name, NULL);
+                toast_show(toast, "Fournisseur supprime", false);
+            } else toast_show(toast, err, true);
         }
-
-        row_y += 48;
-    }
 
     if (show_form) {
         Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 200, 440, 400 };
@@ -1494,6 +1511,8 @@ static void draw_suppliers_screen(WmsDb *db, Toast *toast) {
                               : db_create_supplier(db, &s, err, sizeof err);
 
             if (ok) {
+                db_log_audit(db, g_session.user_id, editing ? "modification" : "creation",
+                             "fournisseur", s.name, NULL);
                 toast_show(toast, editing ? "Fournisseur modifie" : "Fournisseur ajoute", false);
                 show_form = false;
             } else {
@@ -1607,7 +1626,7 @@ static void draw_purchase_orders_screen(WmsDb *db, Toast *toast) {
             if (GuiButton((Rectangle){bx,by,130,32}, "Creer")) {
                 int new_po_id;
                 char err[256];
-                if (db_create_purchase_order(db, f_supplier_id, g_session.user_id, f_reference,
+            if (db_create_purchase_order(db, f_supplier_id, g_session.user_id, f_reference,
                                               &new_po_id, err, sizeof err)) {
                     g_active_po_id = new_po_id;
                     PurchaseOrder tmp[256];
@@ -1615,6 +1634,7 @@ static void draw_purchase_orders_screen(WmsDb *db, Toast *toast) {
                     for (int i = 0; i < c; i++)
                         if (tmp[i].id == new_po_id)
                             snprintf(g_active_po_number, sizeof g_active_po_number, "%s", tmp[i].po_number);
+                    db_log_audit(db, g_session.user_id, "creation", "commande", g_active_po_number, NULL);
                     toast_show(toast, "Commande creee", false);
                     show_form = false;
                     g_screen = SCREEN_PO_DETAIL;
@@ -1909,7 +1929,7 @@ static void draw_stock_take_screen(WmsDb *db, Product *all_products, int total_p
         Location *all_locations;
         int total_locations = inv_get_locations(&all_locations);
 
-        Rectangle box = { GetScreenWidth()/2 - 210, GetScreenHeight()/2 - 190, 420, 380 };
+        Rectangle box = { GetScreenWidth()/2 - 210, GetScreenHeight()/2 - 220, 420, 440 };
         DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
         GuiPanel(box, TextFormat("Comptage - %s", count_product_name));
 
@@ -1936,19 +1956,19 @@ static void draw_stock_take_screen(WmsDb *db, Product *all_products, int total_p
         bool *flags[2] = { &e_counted, &e_reason };
         NavResult nav = count_loc_dropdown_open ? (NavResult){false,false} : nav_handle_focus(flags, 2);
 
-        by += 40;
-        GuiLabel((Rectangle){ bx, by, 200, 24 }, "Quantite comptee (physique)");
+          by += 70;
+        GuiLabel((Rectangle){ bx, by, 250, 24 }, "Quantite comptee (physique)");
         if (GuiTextBox((Rectangle){ bx, by + 26, 120, 24 }, f_counted, sizeof f_counted, e_counted) && !nav.moved) {
             e_counted = !e_counted; if (e_counted) e_reason = false;
         }
 
-        by += 66;
-        GuiLabel((Rectangle){ bx, by, 200, 24 }, "Raison (ex: comptage annuel)");
+        by += 70;
+        GuiLabel((Rectangle){ bx, by, 320, 24 }, "Raison (ex: comptage annuel)");
         if (GuiTextBox((Rectangle){ bx, by + 26, 370, 24 }, f_reason, sizeof f_reason, e_reason) && !nav.moved) {
             e_reason = !e_reason; if (e_reason) e_counted = false;
         }
 
-        by += 66;
+        by += 70;
         if (!count_loc_dropdown_open) {
             if (GuiButton((Rectangle){ bx, by, 160, 32 }, "Valider l'ajustement") || nav.submit) {
                 if (!str_is_integer(f_counted) || atoi(f_counted) < 0) {
@@ -1992,13 +2012,92 @@ static void draw_stock_take_screen(WmsDb *db, Product *all_products, int total_p
                 bool selected = (count_location_id == all_locations[li].id);
                 if (hover || selected) DrawRectangleRec(row, (Color){239,246,255,255});
                 AppText(all_locations[li].code, row.x + 8, row.y + 5, 13, (Color){30,41,59,255});
-                if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                                if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                     count_location_id = all_locations[li].id;
                     count_loc_dropdown_open = false;
                 }
             }
         }
     }
+}
+
+/* Every create/edit/delete/restore action across products, categories,
+ * suppliers, users, locations, and purchase orders - separate from the
+ * stock-movement audit trail (Journal d'audit), which already covers
+ * "who moved stock" on its own. */
+static void draw_crud_log_screen(WmsDb *db) {
+    ClearBackground((Color){ 245, 247, 250, 255 });
+    DrawRectangle(0, 0, GetScreenWidth(), 74, (Color){ 21, 41, 71, 255 });
+    if (g_logoLoaded)
+        DrawTextureEx(g_logoLockupDark, (Vector2){ 20, 8 }, 0, 34.0f / g_logoLockupDark.height, WHITE);
+    AppText("Historique des actions (creation, modification, suppression)", 20, 46, 14, (Color){180,190,210,255});
+
+    Rectangle back_btn = { GetScreenWidth() - 150, 20, 130, 32 };
+    bool back_hover = CheckCollisionPointRec(GetMousePosition(), back_btn);
+    DrawRectangleRounded(back_btn, 0.2f, 6, back_hover ? (Color){37,54,88,255} : (Color){71,85,105,255});
+    Vector2 back_ts = MeasureTextEx(g_appFont, "< Categories", 14, 1);
+    AppText("< Categories", back_btn.x + back_btn.width/2 - back_ts.x/2, back_btn.y + 9, 14, WHITE);
+    if (back_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) g_screen = SCREEN_CATEGORIES;
+
+    static AuditLogEntry log[500];
+    static int page = 0;
+    int count = db_list_audit_log(db, log, 500);
+
+    char summary[64];
+    snprintf(summary, sizeof summary, "%d action(s) enregistree(s)", count);
+    AppText(summary, 20, 90, 14, COLOR_TEXT_MUTED);
+
+    int table_x = 20, ty = 120;
+    int col_date = table_x, col_user = table_x + 150, col_action = table_x + 280,
+        col_entity = table_x + 420, col_label = table_x + 560;
+    AppText("Date/heure", col_date, ty, 13, DARKGRAY);
+    AppText("Utilisateur", col_user, ty, 13, DARKGRAY);
+    AppText("Action", col_action, ty, 13, DARKGRAY);
+    AppText("Type", col_entity, ty, 13, DARKGRAY);
+    AppText("Element / details", col_label, ty, 13, DARKGRAY);
+
+    int row_y = ty + 28;
+    int PAGE_SIZE_LOG = 16;
+    int page_count = (count + PAGE_SIZE_LOG - 1) / PAGE_SIZE_LOG;
+    if (page >= page_count) page = page_count > 0 ? page_count - 1 : 0;
+    int start = page * PAGE_SIZE_LOG;
+    int shown = 0;
+
+    if (count == 0) {
+        AppText("Aucune action enregistree pour le moment.", table_x, row_y, 14, COLOR_TEXT_MUTED);
+    }
+
+    for (int i = start; i < count && shown < PAGE_SIZE_LOG; i++, shown++) {
+        AuditLogEntry *e = &log[i];
+        AppText(e->created_at, col_date, row_y, 13, (Color){30,41,59,255});
+        AppText(e->username, col_user, row_y, 13, COLOR_TEXT_MUTED);
+
+        Color action_color = (Color){30,41,59,255};
+        if (strcmp(e->action, "creation") == 0) action_color = COLOR_ACCENT_TEAL;
+        else if (strcmp(e->action, "suppression") == 0) action_color = COLOR_ACCENT_RED;
+        else if (strcmp(e->action, "modification") == 0) action_color = COLOR_ACCENT_ORANGE;
+        else if (strcmp(e->action, "restauration") == 0) action_color = COLOR_ACCENT_BLUE;
+        AppText(e->action, col_action, row_y, 13, action_color);
+
+        AppText(e->entity_type, col_entity, row_y, 13, (Color){30,41,59,255});
+
+        char label_buf[192];
+        if (e->details[0]) snprintf(label_buf, sizeof label_buf, "%s - %s", e->entity_label, e->details);
+        else snprintf(label_buf, sizeof label_buf, "%s", e->entity_label);
+        int label_max_w = GetScreenWidth() - col_label - 20;
+        BeginScissorMode(col_label, row_y - 2, label_max_w, 18);
+        AppText(label_buf, col_label, row_y, 13, COLOR_TEXT_MUTED);
+        EndScissorMode();
+
+        row_y += 26;
+    }
+
+    int pag_y = GetScreenHeight() - 60;
+    char page_label[32];
+    snprintf(page_label, sizeof page_label, "Page %d / %d", page + 1, page_count > 0 ? page_count : 1);
+    DrawText(page_label, table_x, pag_y + 6, 14, DARKGRAY);
+    if (GuiButton((Rectangle){ table_x + 140, pag_y, 70, 30 }, "< Prec") && page > 0) page--;
+    if (GuiButton((Rectangle){ table_x + 220, pag_y, 70, 30 }, "Suiv >") && page + 1 < page_count) page++;
 }
 
 
@@ -2227,7 +2326,7 @@ void gui_run(WmsDb *db) {
         /* ---- archived products screen ---- */
         if (g_screen == SCREEN_ARCHIVED_PRODUCTS) {
             BeginDrawing();
-            draw_archived_products_screen(&all_products, &total_products, &toast);
+            draw_archived_products_screen(db, &all_products, &total_products, &toast);
             EndDrawing();
             continue;
         }
@@ -2276,6 +2375,14 @@ void gui_run(WmsDb *db) {
         if (g_screen == SCREEN_STOCK_TAKE) {
             BeginDrawing();
             draw_stock_take_screen(db, all_products, total_products, &toast);
+            EndDrawing();
+            continue;
+        }
+
+        /* ---- CRUD action audit log ---- */
+        if (g_screen == SCREEN_CRUD_LOG) {
+            BeginDrawing();
+            draw_crud_log_screen(db);
             EndDrawing();
             continue;
         }
@@ -2683,6 +2790,7 @@ void gui_run(WmsDb *db) {
                         total_products = inv_all_products(&all_products);
                         inv_refresh_categories(db);
                         total_categories = inv_get_categories(&all_categories);
+                        db_log_audit(db, g_session.user_id, "creation", "produit", np.name, np.sku);
 
                         int initial_qty = atoi(f_initial_qty);
                         if (initial_qty > 0) {
@@ -2881,6 +2989,7 @@ void gui_run(WmsDb *db) {
                         toast_show(&toast, err, true);
                     } else if (inv_update_product(&upd, err, sizeof err)) {
                         total_products = inv_all_products(&all_products);
+                        db_log_audit(db, g_session.user_id, "modification", "produit", upd.name, NULL);
                         toast_show(&toast, "Produit modifie", false);
                         panel = PANEL_NONE;
                     } else {
@@ -2943,9 +3052,13 @@ void gui_run(WmsDb *db) {
             by += 60;
             if (GuiButton((Rectangle){ bx, by, 160, 34 }, "Oui, archiver")) {
                 char err[256];
+                Product *archived_p = find_product_by_id(all_products, total_products, edit_product_id);
+                char archived_name[128];
+                snprintf(archived_name, sizeof archived_name, "%s", archived_p ? archived_p->name : "");
                 if (inv_delete_product(edit_product_id, &g_session, err, sizeof err)) {
                     total_products = inv_all_products(&all_products);
                     selected_product_id = -1;
+                    db_log_audit(db, g_session.user_id, "suppression", "produit", archived_name, "Archivage (soft-delete)");
                     toast_show(&toast, "Produit archive", false);
                 } else {
                     toast_show(&toast, err, true); /* e.g. "stock restant non nul" */
@@ -3256,10 +3369,11 @@ void gui_run(WmsDb *db) {
                     toast_show(&toast, "Capacite invalide", true);
                 } else {
                     char err[256];
-                    if (db_create_location(db, loc_code, loc_aisle, loc_shelf, loc_bin,
+            if (db_create_location(db, loc_code, loc_aisle, loc_shelf, loc_bin,
                                             atoi(loc_capacity[0] ? loc_capacity : "0"), err, sizeof err)) {
                         inv_refresh_locations(db);
                         total_locations = inv_get_locations(&all_locations);
+                        db_log_audit(db, g_session.user_id, "creation", "emplacement", loc_code, NULL);
                         toast_show(&toast, "Emplacement ajoute", false);
                         loc_code[0]=loc_aisle[0]=loc_shelf[0]=loc_bin[0]=loc_capacity[0]='\0';
                     } else {
