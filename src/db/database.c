@@ -40,6 +40,54 @@ void db_close(WmsDb *db) {
     }
 }
 
+/* One-time backfill: reconstructs "creation" audit entries for rows that
+ * already existed before this logging feature was added, using each
+ * table's own created_at timestamp. Attributed to no user ("systeme"),
+ * since the app never recorded who created these rows historically -
+ * that information genuinely doesn't exist anywhere to recover. Only
+ * runs once - guarded by checking audit_log is still empty, so it never
+ * duplicates entries once real logging has taken over. Edits and
+ * deletions from before this feature existed can NOT be reconstructed;
+ * only initial creation is recoverable via created_at. */
+static void db_backfill_audit_log(WmsDb *db) {
+    int existing = 0;
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle, "SELECT COUNT(*) FROM audit_log;", -1, &st, NULL);
+    if (sqlite3_step(st) == SQLITE_ROW) existing = sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    if (existing > 0) return; /* already backfilled, or real entries exist - never re-run */
+
+    const char *note = "Action historique (anterieure a l'activation du journal - utilisateur inconnu)";
+
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
+        "SELECT NULL, 'creation', 'produit', name, ?, created_at FROM products;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
+        "SELECT NULL, 'creation', 'fournisseur', name, ?, created_at FROM suppliers;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
+        "SELECT NULL, 'creation', 'utilisateur', username, ?, created_at FROM users;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
+        "SELECT NULL, 'creation', 'commande', po_number, ?, created_at FROM purchase_orders;", -1, &st, NULL);
+    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
+    sqlite3_step(st);
+    sqlite3_finalize(st);
+}
+
 bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
     FILE *f = fopen(schema_sql_path, "rb");
     if (!f) {
@@ -124,56 +172,9 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
         "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
         ");", NULL, NULL, NULL);
 
-    db_backfill_audit_log(db);
+       db_backfill_audit_log(db);
 
     return true;
-}
-/* One-time backfill: reconstructs "creation" audit entries for rows that
- * already existed before this logging feature was added, using each
- * table's own created_at timestamp. Attributed to no user ("systeme"),
- * since the app never recorded who created these rows historically -
- * that information genuinely doesn't exist anywhere to recover. Only
- * runs once - guarded by checking audit_log is still empty, so it never
- * duplicates entries once real logging has taken over. Edits and
- * deletions from before this feature existed can NOT be reconstructed;
- * only initial creation is recoverable via created_at. */
-static void db_backfill_audit_log(WmsDb *db) {
-    int existing = 0;
-    sqlite3_stmt *st;
-    sqlite3_prepare_v2(db->handle, "SELECT COUNT(*) FROM audit_log;", -1, &st, NULL);
-    if (sqlite3_step(st) == SQLITE_ROW) existing = sqlite3_column_int(st, 0);
-    sqlite3_finalize(st);
-    if (existing > 0) return; /* already backfilled, or real entries exist - never re-run */
-
-    const char *note = "Action historique (anterieure a l'activation du journal - utilisateur inconnu)";
-
-    sqlite3_prepare_v2(db->handle,
-        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
-        "SELECT NULL, 'creation', 'produit', name, ?, created_at FROM products;", -1, &st, NULL);
-    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
-    sqlite3_step(st);
-    sqlite3_finalize(st);
-
-    sqlite3_prepare_v2(db->handle,
-        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
-        "SELECT NULL, 'creation', 'fournisseur', name, ?, created_at FROM suppliers;", -1, &st, NULL);
-    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
-    sqlite3_step(st);
-    sqlite3_finalize(st);
-
-    sqlite3_prepare_v2(db->handle,
-        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
-        "SELECT NULL, 'creation', 'utilisateur', username, ?, created_at FROM users;", -1, &st, NULL);
-    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
-    sqlite3_step(st);
-    sqlite3_finalize(st);
-
-    sqlite3_prepare_v2(db->handle,
-        "INSERT INTO audit_log (user_id, action, entity_type, entity_label, details, created_at) "
-        "SELECT NULL, 'creation', 'commande', po_number, ?, created_at FROM purchase_orders;", -1, &st, NULL);
-    sqlite3_bind_text(st, 1, note, -1, SQLITE_TRANSIENT);
-    sqlite3_step(st);
-    sqlite3_finalize(st);
 }
 
 bool db_begin_immediate(WmsDb *db) {
