@@ -1462,6 +1462,9 @@ static void draw_suppliers_screen(WmsDb *db, Toast *toast) {
             } else toast_show(toast, err, true);
         }
 
+        row_y += 48;
+    }
+
     if (show_form) {
         Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 200, 440, 400 };
         DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
