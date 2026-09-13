@@ -1,11 +1,12 @@
 """
-export_report.py - reads a CSV written by the C app (already sorted by
-category, then product name) and produces a styled .xlsx report grouped
-into one section per category, plus a top-level summary band.
+export_report.py - reads two CSVs written by the C app (products, already
+sorted by category then name; and movement history) and produces a
+two-sheet styled .xlsx report: "Produits" (grouped by category, with
+subtotals) and "Historique" (every stock movement, newest first).
 No pandas/numpy - just csv (stdlib) + openpyxl.
 
 Usage:
-    python export_report.py [csv_path] [xlsx_path] [sheet_name]
+    python export_report.py [csv_path] [xlsx_path] [sheet_name] [movements_csv]
 """
 
 import csv
@@ -15,21 +16,22 @@ import sys
 
 DEFAULT_CSV = "exports/export.csv"
 DEFAULT_XLSX = "exports/rapport_stock.xlsx"
-DEFAULT_SHEET = "Rapport Stock"
+DEFAULT_SHEET = "Produits"
+DEFAULT_MOV_CSV = "exports/export_movements.csv"
 
-HEADER_COLOR = "1E293B"     # navy - matches SmartStock's header bar
-SUBHEADER_COLOR = "334155"  # lighter navy - column header row inside a section
-ROW_ALT_COLOR = "EFF6FF"    # very light blue - matches the app's row hover tint
-SUMMARY_COLOR = "0F172A"    # darkest navy - top summary band
+HEADER_COLOR = "1E293B"
+SUBHEADER_COLOR = "334155"
+ROW_ALT_COLOR = "EFF6FF"
+SUMMARY_COLOR = "0F172A"
 GREEN = "10B981"
 RED = "DC2626"
 
-# Columns written by inv_export_csv() (in this exact order). "Categorie"
-# is used to split into sections, not shown as its own column.
 CSV_COLUMNS = ["PRD", "SKU", "Nom", "Categorie", "Unite",
                "Quantite", "Prix_Unitaire", "Valeur_Stock", "Seuil_Alerte", "Statut"]
 DISPLAY_COLUMNS = ["PRD", "SKU", "Nom", "Unite", "Quantite", "Prix_Unitaire", "Valeur_Stock", "Seuil_Alerte", "Statut"]
 NUMERIC_COLUMNS = {"Quantite", "Prix_Unitaire", "Valeur_Stock", "Seuil_Alerte"}
+
+MOV_COLUMNS = ["Date", "Produit", "Qte", "Type", "Reference", "Utilisateur", "Raison"]
 
 
 def ensure_openpyxl():
@@ -55,6 +57,8 @@ def to_number(value):
 
 
 def read_csv(path):
+    if not path or not os.path.isfile(path):
+        return [], []
     with open(path, newline="", encoding="utf-8-sig") as f:
         rows = list(csv.reader(f))
     if not rows:
@@ -63,9 +67,6 @@ def read_csv(path):
 
 
 def group_by_category(headers, data):
-    """Splits rows into (category_name, [rows]) groups, preserving the
-    order they arrive in - which is already category-then-name sorted
-    on the C side, so no re-sorting needed here."""
     cat_idx = headers.index("Categorie")
     groups = []
     current_cat, current_rows = None, []
@@ -81,9 +82,7 @@ def group_by_category(headers, data):
     return groups
 
 
-def build_workbook(headers, data, sheet_name):
-    wb = Workbook()
-    ws = wb.active
+def build_products_sheet(ws, headers, data, sheet_name):
     ws.title = (sheet_name or DEFAULT_SHEET)[:31]
 
     thin = Side(style="thin", color="D0D5DD")
@@ -92,12 +91,9 @@ def build_workbook(headers, data, sheet_name):
     col_count = len(DISPLAY_COLUMNS)
 
     qty_idx = CSV_COLUMNS.index("Quantite")
-    price_idx = CSV_COLUMNS.index("Prix_Unitaire")
     value_idx = CSV_COLUMNS.index("Valeur_Stock")
     threshold_idx = CSV_COLUMNS.index("Seuil_Alerte")
-    statut_idx = CSV_COLUMNS.index("Statut")
 
-    # ---- top summary band ----
     total_products = len(data)
     total_qty = sum((to_number(r[qty_idx]) or 0) for r in data if qty_idx < len(r))
     total_value = sum((to_number(r[value_idx]) or 0) for r in data if value_idx < len(r))
@@ -121,7 +117,6 @@ def build_workbook(headers, data, sheet_name):
         vc.border = border
     row_cursor = 5
 
-    # ---- one section per category ----
     for cat_name, rows in groups:
         display_name = cat_name if cat_name else "Sans categorie"
 
@@ -163,7 +158,7 @@ def build_workbook(headers, data, sheet_name):
                 value = raw
                 if h in NUMERIC_COLUMNS:
                     num = to_number(raw)
-                    value = num if num is not None else raw  # fallback: keep as text, don't crash
+                    value = num if num is not None else raw
 
                 cell = ws.cell(row=row_cursor, column=ci, value=value)
                 cell.border = border
@@ -179,7 +174,6 @@ def build_workbook(headers, data, sheet_name):
 
             row_cursor += 1
 
-        # subtotal line for this category
         sub_label = ws.cell(row=row_cursor, column=1, value=f"Sous-total ({len(rows)} produit(s))")
         sub_label.font = Font(bold=True, color=HEADER_COLOR)
         qty_col = DISPLAY_COLUMNS.index("Quantite") + 1
@@ -190,9 +184,8 @@ def build_workbook(headers, data, sheet_name):
         vc.font = Font(bold=True, color=GREEN)
         for ci in range(1, col_count + 1):
             ws.cell(row=row_cursor, column=ci).border = border
-        row_cursor += 2  # blank spacer row before next category
+        row_cursor += 2
 
-    # ---- column widths: longest content across the whole sheet + margin ----
     for ci, h in enumerate(DISPLAY_COLUMNS, start=1):
         max_len = len(h)
         src_idx = CSV_COLUMNS.index(h)
@@ -201,13 +194,64 @@ def build_workbook(headers, data, sheet_name):
                 max_len = max(max_len, len(str(row[src_idx])))
         ws.column_dimensions[get_column_letter(ci)].width = max_len + 4
 
-    return wb
+
+def build_history_sheet(ws, mov_headers, mov_data):
+    ws.title = "Historique"
+
+    thin = Side(style="thin", color="D0D5DD")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    alt_fill = PatternFill("solid", fgColor=ROW_ALT_COLOR)
+    col_count = len(MOV_COLUMNS)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
+    title_cell = ws.cell(row=1, column=1, value=f"Historique des mouvements ({len(mov_data)} mouvement(s))")
+    title_cell.fill = PatternFill("solid", fgColor=SUMMARY_COLOR)
+    title_cell.font = Font(color="FFFFFF", bold=True, size=13)
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 24
+
+    for ci, h in enumerate(MOV_COLUMNS, start=1):
+        c = ws.cell(row=3, column=ci, value=h)
+        c.fill = PatternFill("solid", fgColor=HEADER_COLOR)
+        c.font = Font(color="FFFFFF", bold=True)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = border
+
+    qty_idx = MOV_COLUMNS.index("Qte")
+    if not mov_data:
+        return
+
+    for i, row in enumerate(mov_data):
+        r = i + 4
+        is_alt = i % 2 == 1
+        for ci, h in enumerate(MOV_COLUMNS, start=1):
+            src_idx = MOV_COLUMNS.index(h)
+            raw = row[src_idx] if src_idx < len(row) else ""
+            cell = ws.cell(row=r, column=ci, value=raw)
+            cell.border = border
+            if is_alt:
+                cell.fill = alt_fill
+            if ci - 1 == qty_idx:
+                is_pos = raw.strip().startswith("+")
+                cell.font = Font(color=GREEN if is_pos else RED, bold=True)
+
+    for ci, h in enumerate(MOV_COLUMNS, start=1):
+        max_len = len(h)
+        src_idx = MOV_COLUMNS.index(h)
+        for row in mov_data:
+            if src_idx < len(row):
+                max_len = max(max_len, len(str(row[src_idx])))
+        ws.column_dimensions[get_column_letter(ci)].width = max_len + 4
+
+    ws.freeze_panes = "A4"
+    ws.auto_filter.ref = f"A3:{get_column_letter(col_count)}{len(mov_data) + 3}"
 
 
 def main():
     csv_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CSV
     xlsx_path = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_XLSX
     sheet_name = sys.argv[3] if len(sys.argv) > 3 else DEFAULT_SHEET
+    mov_csv_path = sys.argv[4] if len(sys.argv) > 4 else DEFAULT_MOV_CSV
 
     if not os.path.isfile(csv_path):
         print(f"Erreur: fichier CSV introuvable: {csv_path}")
@@ -218,7 +262,14 @@ def main():
         print("Erreur: CSV vide")
         sys.exit(1)
 
-    wb = build_workbook(headers, data, sheet_name)
+    mov_headers, mov_data = read_csv(mov_csv_path)
+
+    wb = Workbook()
+    build_products_sheet(wb.active, headers, data, sheet_name)
+
+    mov_ws = wb.create_sheet("Historique")
+    build_history_sheet(mov_ws, mov_headers, mov_data)
+
     out_dir = os.path.dirname(xlsx_path)
     if out_dir:
         os.makedirs(out_dir, exist_ok=True)
@@ -228,3 +279,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
