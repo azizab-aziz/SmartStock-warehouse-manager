@@ -320,16 +320,22 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
 }
 
 #define EXPORT_CSV_PATH  "exports/export.csv"
+#define EXPORT_MOV_ALL_CSV_PATH "exports/export_movements.csv"
 #define EXPORT_XLSX_PATH "exports/rapport_stock.xlsx"
 #define EXPORT_PY_SCRIPT "python_scripts/export_report.py"
 
-/* Writes the CSV, shells out to the Python/openpyxl script, and reports
- * success/failure via toast. category_id <= 0 exports every category. */
+/* Writes both CSVs (products + movement history), shells out to the
+ * Python/openpyxl script, and reports success/failure via toast.
+ * category_id <= 0 exports every category. */
 static void run_excel_export(int category_id, const char *sheet_name, Toast *toast) {
     _mkdir("exports"); /* ignored if it already exists */
 
     char err[256];
     if (!inv_export_csv(category_id, EXPORT_CSV_PATH, err, sizeof err)) {
+        toast_show(toast, err, true);
+        return;
+    }
+    if (!inv_export_all_movements_csv(category_id, EXPORT_MOV_ALL_CSV_PATH, 5000, err, sizeof err)) {
         toast_show(toast, err, true);
         return;
     }
@@ -348,10 +354,10 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
        this app has no console - "type exports\export_log.txt" afterwards
        shows exactly why it failed (missing python, missing script,
        openpyxl install error, etc). */
-    char cmd[900];
+    char cmd[1100];
     snprintf(cmd, sizeof cmd,
-             "python \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\export_log.txt\" 2>&1",
-             EXPORT_PY_SCRIPT, EXPORT_CSV_PATH, xlsx_path, sheet_name);
+             "python \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\export_log.txt\" 2>&1",
+             EXPORT_PY_SCRIPT, EXPORT_CSV_PATH, xlsx_path, sheet_name, EXPORT_MOV_ALL_CSV_PATH);
     int rc = system(cmd);
 
     FILE *dbg = fopen("exports/export_debug.txt", "w");
