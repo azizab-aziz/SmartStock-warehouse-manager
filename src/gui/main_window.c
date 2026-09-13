@@ -319,23 +319,27 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
     t->is_error = is_error;
 }
 
-#define EXPORT_CSV_PATH  "exports/export.csv"
-#define EXPORT_MOV_ALL_CSV_PATH "exports/export_movements.csv"
+#define EXPORT_TMP_CSV_PATH  "exports/tmp/export.csv"
+#define EXPORT_TMP_MOV_CSV_PATH "exports/tmp/export_movements.csv"
 #define EXPORT_XLSX_PATH "exports/rapport_stock.xlsx"
 #define EXPORT_PY_SCRIPT "python_scripts/export_report.py"
 
-/* Writes both CSVs (products + movement history), shells out to the
- * Python/openpyxl script, and reports success/failure via toast.
+/* Writes both CSVs (products + movement history) to a scratch subfolder,
+ * shells out to the Python/openpyxl script, deletes the scratch CSVs
+ * once done, and reports success/failure via toast. Only the final
+ * .xlsx is ever left visible in exports/ - the intermediate CSVs never
+ * sit around for the user to see or accidentally open.
  * category_id <= 0 exports every category. */
 static void run_excel_export(int category_id, const char *sheet_name, Toast *toast) {
     _mkdir("exports"); /* ignored if it already exists */
+    _mkdir("exports/tmp");
 
     char err[256];
-    if (!inv_export_csv(category_id, EXPORT_CSV_PATH, err, sizeof err)) {
+    if (!inv_export_csv(category_id, EXPORT_TMP_CSV_PATH, err, sizeof err)) {
         toast_show(toast, err, true);
         return;
     }
-    if (!inv_export_all_movements_csv(category_id, EXPORT_MOV_ALL_CSV_PATH, 5000, err, sizeof err)) {
+    if (!inv_export_all_movements_csv(category_id, EXPORT_TMP_MOV_CSV_PATH, 5000, err, sizeof err)) {
         toast_show(toast, err, true);
         return;
     }
@@ -357,7 +361,7 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
     char cmd[1100];
     snprintf(cmd, sizeof cmd,
              "python \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\export_log.txt\" 2>&1",
-             EXPORT_PY_SCRIPT, EXPORT_CSV_PATH, xlsx_path, sheet_name, EXPORT_MOV_ALL_CSV_PATH);
+             EXPORT_PY_SCRIPT, EXPORT_TMP_CSV_PATH, xlsx_path, sheet_name, EXPORT_TMP_MOV_CSV_PATH);
     int rc = system(cmd);
 
     FILE *dbg = fopen("exports/export_debug.txt", "w");
@@ -366,6 +370,11 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
         fprintf(dbg, "system() return code: %d\n", rc);
         fclose(dbg);
     }
+
+    /* Clean up the scratch CSVs regardless of success/failure - they were
+       only ever meant to feed the Python script, never to be seen. */
+    remove(EXPORT_TMP_CSV_PATH);
+    remove(EXPORT_TMP_MOV_CSV_PATH);
 
     if (rc == 0) {
         char msg[160];
@@ -376,25 +385,28 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
     }
 }
 
-#define EXPORT_INFO_CSV_PATH "exports/fiche_info.csv"
-#define EXPORT_MOV_CSV_PATH  "exports/fiche_mouvements.csv"
+#define EXPORT_INFO_TMP_CSV_PATH "exports/tmp/fiche_info.csv"
+#define EXPORT_MOV_TMP_CSV_PATH  "exports/tmp/fiche_mouvements.csv"
 #define EXPORT_PDF_SCRIPT    "python_scripts/product_sheet.py"
 
-/* Writes the two CSVs (product info + movement history), shells out to
- * the Python/reportlab script, and reports success/failure via toast. */
+/* Writes the two scratch CSVs (product info + movement history), shells
+ * out to the Python/reportlab script, deletes the scratch CSVs once
+ * done, and reports success/failure via toast. Only the final .pdf is
+ * ever left visible in exports/. */
 static void run_product_sheet_export(Product *p, Toast *toast) {
     if (!p) {
         toast_show(toast, "Selectionnez un produit d'abord", true);
         return;
     }
     _mkdir("exports");
+    _mkdir("exports/tmp");
 
     char err[256];
-    if (!inv_export_product_info_csv(p->id, EXPORT_INFO_CSV_PATH, err, sizeof err)) {
+    if (!inv_export_product_info_csv(p->id, EXPORT_INFO_TMP_CSV_PATH, err, sizeof err)) {
         toast_show(toast, err, true);
         return;
     }
-    if (!inv_export_movements_csv(p->id, EXPORT_MOV_CSV_PATH, 200, err, sizeof err)) {
+    if (!inv_export_movements_csv(p->id, EXPORT_MOV_TMP_CSV_PATH, 200, err, sizeof err)) {
         toast_show(toast, err, true);
         return;
     }
@@ -405,7 +417,7 @@ static void run_product_sheet_export(Product *p, Toast *toast) {
     char cmd[900];
     snprintf(cmd, sizeof cmd,
              "python \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\sheet_log.txt\" 2>&1",
-             EXPORT_PDF_SCRIPT, EXPORT_INFO_CSV_PATH, EXPORT_MOV_CSV_PATH, pdf_path);
+             EXPORT_PDF_SCRIPT, EXPORT_INFO_TMP_CSV_PATH, EXPORT_MOV_TMP_CSV_PATH, pdf_path);
     int rc = system(cmd);
 
     FILE *dbg = fopen("exports/sheet_debug.txt", "w");
@@ -414,6 +426,9 @@ static void run_product_sheet_export(Product *p, Toast *toast) {
         fprintf(dbg, "system() return code: %d\n", rc);
         fclose(dbg);
     }
+
+    remove(EXPORT_INFO_TMP_CSV_PATH);
+    remove(EXPORT_MOV_TMP_CSV_PATH);
 
     if (rc == 0) {
         char msg[160];
