@@ -125,6 +125,11 @@ bool inv_export_product_info_csv(int product_id, const char *path, char *err_out
  * Reference,Utilisateur,Raison) - feeds the PDF sheet's history table. */
 bool inv_export_movements_csv(int product_id, const char *path, int max_results,
                                char *err_out, size_t err_len);
+/* Every stock movement across every product (or, if category_id > 0,
+ * only movements on products currently in that category), written as
+ * CSV for the "Historique" sheet of the Excel report. Most recent first. */
+bool inv_export_all_movements_csv(int category_id, const char *path, int max_results,
+                                   char *err_out, size_t err_len);
 /* Receives (fully or partially) one purchase-order line item: posts an
  * MV_RECEPTION stock movement for the newly-received delta (the atomic,
  * audited path - same inv_post_movement everything else uses), updates
