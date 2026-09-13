@@ -687,6 +687,49 @@ bool inv_export_movements_csv(int product_id, const char *path, int max_results,
         fprintf(f, "\r\n");
     }
 
+        fclose(f);
+    free(movs);
+    return true;
+}
+
+bool inv_export_all_movements_csv(int category_id, const char *path, int max_results,
+                                   char *err_out, size_t err_len) {
+    Movement *movs = malloc(sizeof(Movement) * (size_t)max_results);
+    if (!movs) {
+        set_err(err_out, err_len, "Memoire insuffisante");
+        return false;
+    }
+    int count = inv_get_all_movements(movs, max_results);
+
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        free(movs);
+        set_err(err_out, err_len, "Impossible de creer le fichier CSV (dossier manquant ?)");
+        return false;
+    }
+    fputc(0xEF, f); fputc(0xBB, f); fputc(0xBF, f);
+    fprintf(f, "Date,Produit,Qte,Type,Reference,Utilisateur,Raison\r\n");
+
+    for (int i = 0; i < count; i++) {
+        Movement *mv = &movs[i];
+        if (category_id > 0) {
+            /* Filter to products currently in this category - a movement
+               on a product that's since moved category or been archived
+               is intentionally excluded here, matching the same "reflects
+               what's currently active" rule inv_export_csv already uses. */
+            Product *p = find_product_internal(mv->product_id);
+            if (!p || p->category_id != category_id) continue;
+        }
+        csv_write_field(f, mv->created_at); fputc(',', f);
+        csv_write_field(f, mv->product_name); fputc(',', f);
+        fprintf(f, "%+d,", mv->delta);
+        csv_write_field(f, mv->type); fputc(',', f);
+        csv_write_field(f, mv->reference); fputc(',', f);
+        csv_write_field(f, mv->username[0] ? mv->username : "-"); fputc(',', f);
+        csv_write_field(f, mv->reason);
+        fprintf(f, "\r\n");
+    }
+
     fclose(f);
     free(movs);
     return true;
