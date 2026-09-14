@@ -321,7 +321,7 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
 
 #define EXPORT_TMP_CSV_PATH  "exports/tmp/export.csv"
 #define EXPORT_TMP_MOV_CSV_PATH "exports/tmp/export_movements.csv"
-#define EXPORT_XLSX_PATH "exports/rapport_stock.xlsx"
+#define EXPORT_XLSX_PATH "exports/rapport_stock.xlsm"
 #define EXPORT_PY_SCRIPT "python_scripts/export_report.py"
 
 /* Writes both CSVs (products + movement history) to a scratch subfolder,
@@ -350,7 +350,7 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
      * clobber each other. */
     char xlsx_path[128];
     if (category_id > 0)
-        snprintf(xlsx_path, sizeof xlsx_path, "exports/rapport_stock_cat%d.xlsx", category_id);
+        snprintf(xlsx_path, sizeof xlsx_path, "exports/rapport_stock_cat%d.xlsm", category_id);
     else
         snprintf(xlsx_path, sizeof xlsx_path, "%s", EXPORT_XLSX_PATH);
 

@@ -1,8 +1,9 @@
 """
-export_report.py - reads two CSVs written by the C app (products, already
-sorted by category then name; and movement history) and produces a
-two-sheet styled .xlsx report: "Produits" (grouped by category, with
-subtotals) and "Historique" (every stock movement, newest first).
+export_report.py - reads two CSVs written by the C app (products, movement
+history) and fills them into a macro-enabled template (report_template.xlsm)
+that already contains a Workbook_Open VBA macro building a real
+PivotTable + PivotChart + Slicer on its "Dashboard" sheet, sourced from a
+hidden "Data_Raw" Excel Table this script (re)writes on every export.
 No pandas/numpy - just csv (stdlib) + openpyxl.
 
 Usage:
@@ -15,9 +16,10 @@ import subprocess
 import sys
 
 DEFAULT_CSV = "exports/export.csv"
-DEFAULT_XLSX = "exports/rapport_stock.xlsx"
+DEFAULT_XLSX = "exports/rapport_stock.xlsm"
 DEFAULT_SHEET = "Produits"
 DEFAULT_MOV_CSV = "exports/export_movements.csv"
+TEMPLATE_PATH = "python_scripts/templates/report_template.xlsm"
 
 HEADER_COLOR = "1E293B"
 SUBHEADER_COLOR = "334155"
@@ -44,9 +46,10 @@ def ensure_openpyxl():
 
 ensure_openpyxl()
 
-from openpyxl import Workbook
+from openpyxl import load_workbook
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
 def to_number(value):
@@ -82,9 +85,20 @@ def group_by_category(headers, data):
     return groups
 
 
-def build_products_sheet(ws, headers, data, sheet_name):
-    ws.title = (sheet_name or DEFAULT_SHEET)[:31]
+def clear_worksheet(ws):
+    """Wipes a sheet's content while keeping the same sheet object (and
+    therefore the same VBA codename Excel tracks internally) - critical
+    so the macro's Sheets("Data_Raw")/("Dashboard") lookups keep working
+    across every re-export, instead of deleting+recreating sheets."""
+    for merged in list(ws.merged_cells.ranges):
+        ws.unmerge_cells(str(merged))
+    if ws.max_row > 0:
+        ws.delete_rows(1, ws.max_row)
+    for name in list(ws.tables.keys()):
+        del ws.tables[name]
 
+
+def build_products_sheet(ws, headers, data, sheet_name):
     thin = Side(style="thin", color="D0D5DD")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     alt_fill = PatternFill("solid", fgColor=ROW_ALT_COLOR)
@@ -196,8 +210,6 @@ def build_products_sheet(ws, headers, data, sheet_name):
 
 
 def build_history_sheet(ws, mov_headers, mov_data):
-    ws.title = "Historique"
-
     thin = Side(style="thin", color="D0D5DD")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
     alt_fill = PatternFill("solid", fgColor=ROW_ALT_COLOR)
@@ -247,6 +259,39 @@ def build_history_sheet(ws, mov_headers, mov_data):
     ws.auto_filter.ref = f"A3:{get_column_letter(col_count)}{len(mov_data) + 3}"
 
 
+def build_data_raw_sheet(ws, data):
+    """Flat, unstyled table - PRD/SKU/Nom/Categorie/Unite/Quantite/
+    Prix_Unitaire/Valeur_Stock/Seuil_Alerte/Statut, one row per product,
+    no merges or subtotals. This is the PivotTable's real source data;
+    the pretty grouped "Produits" sheet can't be used directly since
+    PivotTables need a clean rectangular range."""
+    headers = CSV_COLUMNS
+    for ci, h in enumerate(headers, start=1):
+        ws.cell(row=1, column=ci, value=h)
+
+    row_count = len(data)
+    for ri, row in enumerate(data, start=2):
+        for ci, h in enumerate(headers, start=1):
+            raw = row[ci - 1] if ci - 1 < len(row) else ""
+            value = raw
+            if h in NUMERIC_COLUMNS:
+                num = to_number(raw)
+                value = num if num is not None else raw
+            ws.cell(row=ri, column=ci, value=value)
+
+    last_row = row_count + 1
+    if row_count == 0:
+        # a Table needs at least one data row - write a harmless blank one
+        for ci in range(1, len(headers) + 1):
+            ws.cell(row=2, column=ci, value="")
+        last_row = 2
+
+    ref = f"A1:{get_column_letter(len(headers))}{last_row}"
+    tbl = Table(displayName="ProduitsTable", ref=ref)
+    tbl.tableStyleInfo = TableStyleInfo(name="TableStyleMedium9", showRowStripes=True)
+    ws.add_table(tbl)
+
+
 def main():
     csv_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_CSV
     xlsx_path = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_XLSX
@@ -256,6 +301,10 @@ def main():
     if not os.path.isfile(csv_path):
         print(f"Erreur: fichier CSV introuvable: {csv_path}")
         sys.exit(1)
+    if not os.path.isfile(TEMPLATE_PATH):
+        print(f"Erreur: modele macro introuvable: {TEMPLATE_PATH} "
+              f"(voir les instructions de configuration du dashboard)")
+        sys.exit(1)
 
     headers, data = read_csv(csv_path)
     if not headers:
@@ -264,11 +313,39 @@ def main():
 
     mov_headers, mov_data = read_csv(mov_csv_path)
 
-    wb = Workbook()
-    build_products_sheet(wb.active, headers, data, sheet_name)
+    wb = load_workbook(TEMPLATE_PATH, keep_vba=True)
 
-    mov_ws = wb.create_sheet("Historique")
-    build_history_sheet(mov_ws, mov_headers, mov_data)
+    if "Produits" in wb.sheetnames:
+        ws_prod = wb["Produits"]
+        clear_worksheet(ws_prod)
+    else:
+        ws_prod = wb.create_sheet("Produits")
+    build_products_sheet(ws_prod, headers, data, sheet_name)
+
+    if "Historique" in wb.sheetnames:
+        ws_hist = wb["Historique"]
+        clear_worksheet(ws_hist)
+    else:
+        ws_hist = wb.create_sheet("Historique")
+    build_history_sheet(ws_hist, mov_headers, mov_data)
+
+    if "Data_Raw" in wb.sheetnames:
+        ws_raw = wb["Data_Raw"]
+        clear_worksheet(ws_raw)
+    else:
+        ws_raw = wb.create_sheet("Data_Raw")
+    build_data_raw_sheet(ws_raw, data)
+    ws_raw.sheet_state = "hidden"  # the Workbook_Open macro re-hides it too; belt and suspenders
+
+    if "Dashboard" not in wb.sheetnames:
+        wb.create_sheet("Dashboard")
+    # Dashboard's actual PivotTable/PivotChart/Slicer are intentionally
+    # NOT touched here - they're rebuilt automatically by the template's
+    # Workbook_Open macro every time the file is opened in Excel, using
+    # whatever fresh data just got written to Data_Raw above.
+
+    if not xlsx_path.lower().endswith(".xlsm"):
+        xlsx_path = os.path.splitext(xlsx_path)[0] + ".xlsm"
 
     out_dir = os.path.dirname(xlsx_path)
     if out_dir:
@@ -279,4 +356,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
