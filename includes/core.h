@@ -21,6 +21,9 @@ typedef struct {
     int    alert_threshold;
     int    supplier_id;
     char   photo_path[256];
+    char   brand[64];           /* product brand, optional */
+    char   description[512];    /* free-text description, optional */
+    char   status[32];          /* custom enum: "actif", "discontinué", "obsolète" */
     int    version;
     int    total_quantity;      /* denormalized sum across all locations,
                                     refreshed on load/movement for fast

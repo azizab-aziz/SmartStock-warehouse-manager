@@ -57,6 +57,10 @@ CREATE TABLE IF NOT EXISTS products (
     alert_threshold INTEGER NOT NULL DEFAULT 0,
     supplier_id     INTEGER REFERENCES suppliers(id),
     photo_path      TEXT,
+    brand           TEXT,
+    description     TEXT,
+    status          TEXT NOT NULL DEFAULT 'actif'
+                    CHECK(status IN ('actif','discontinué','obsolète')),
     version         INTEGER NOT NULL DEFAULT 0,   -- optimistic-lock counter
     active           INTEGER NOT NULL DEFAULT 1,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),

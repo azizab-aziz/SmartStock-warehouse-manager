@@ -123,6 +123,19 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
     sqlite3_exec(db->handle,
         "ALTER TABLE products ADD COLUMN active INTEGER NOT NULL DEFAULT 1;",
         NULL, NULL, NULL);
+    /* Migration: brand/description/status for existing installs created
+       before these columns existed. Same "try and ignore duplicate column"
+       pattern as category_id/active above. ALTER TABLE ADD COLUMN cannot
+       carry the CHECK over for status - the constraint already lives in
+       schema.sql for fresh installs, and writes are validated by only
+       ever sending the three known enum strings (see GUI/status code). */
+    sqlite3_exec(db->handle,
+        "ALTER TABLE products ADD COLUMN brand TEXT;", NULL, NULL, NULL);
+    sqlite3_exec(db->handle,
+        "ALTER TABLE products ADD COLUMN description TEXT;", NULL, NULL, NULL);
+    sqlite3_exec(db->handle,
+        "ALTER TABLE products ADD COLUMN status TEXT NOT NULL DEFAULT 'actif';",
+        NULL, NULL, NULL);
 
     /* New tables for supplier info + purchase/receiving records.
        CREATE TABLE IF NOT EXISTS is idempotent, safe to run every startup -

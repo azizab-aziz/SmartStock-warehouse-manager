@@ -29,6 +29,12 @@
  * consistent (no "pcs" vs "piece" vs "Piece" fragmentation). */
 static const char *UNIT_OPTIONS[] = { "piece", "boite", "kg", "litre" };
 #define UNIT_OPTION_COUNT ((int)(sizeof(UNIT_OPTIONS) / sizeof(UNIT_OPTIONS[0])))
+
+/* Product lifecycle status - custom enum, stored verbatim in
+   products.status. Mirrors the CHECK constraint in schema.sql and the
+   migration default in database.c. */
+static const char *STATUS_OPTIONS[] = { "actif", "discontinué", "obsolète" };
+#define STATUS_OPTION_COUNT ((int)(sizeof(STATUS_OPTIONS) / sizeof(STATUS_OPTIONS[0])))
 #define COLOR_BG_LIGHT    (Color){ 248, 250, 252, 255 }   /* main content bg */
 #define COLOR_TEXT_MUTED  (Color){ 100, 116, 139, 255 }   /* secondary text */
 #define COLOR_BORDER      (Color){ 226, 232, 240, 255 }   /* card borders */
@@ -2203,8 +2209,24 @@ void gui_run(WmsDb *db) {
     char f_sku[64] = {0}, f_name[128] = {0}, f_category[64] = {0};
     char f_price[32] = {0}, f_threshold[16] = {0}, f_initial_qty[16] = {0};
     char f_unit[16] = "piece";
+    char f_barcode[64] = {0};
     bool edit_sku = false, edit_name = false, edit_cat = false,
-         edit_price = false, edit_threshold = false, edit_initial_qty = false;
+         edit_price = false, edit_threshold = false, edit_initial_qty = false,
+         edit_barcode = false;
+
+    /* Extra product fields (brand / description / status / supplier) */
+    char f_brand[64] = {0};
+    char f_description[512] = {0};
+    char f_status[32] = "actif";
+    bool edit_brand = false, edit_description = false;
+    bool status_dropdown_open = false;
+    Rectangle status_field_rect = {0};
+    Supplier f_suppliers[256];
+    int  f_supplier_count = 0;
+    int  f_supplier_id = 0;
+    char f_supplier_name[128] = {0};
+    bool supplier_dropdown_open = false;
+    Rectangle supplier_field_rect = {0};
 
         /* Category select-dropdown state */
     int  f_category_id = 0;         /* 0 = none chosen yet */
@@ -2255,6 +2277,20 @@ void gui_run(WmsDb *db) {
     char e_unit[16] = "piece";
     bool e_unit_dropdown_open = false;
     Rectangle e_unit_field_rect = {0};
+
+    /* Extra product fields in the edit form */
+    char e_brand[64] = {0};
+    char e_description[512] = {0};
+    char e_status[32] = "actif";
+    bool ee_brand = false, ee_description = false;
+    bool e_status_dropdown_open = false;
+    Rectangle e_status_field_rect = {0};
+    Supplier e_suppliers[256];
+    int  e_supplier_count = 0;
+    int  e_supplier_id = 0;
+    char e_supplier_name[128] = {0};
+    bool e_supplier_dropdown_open = false;
+    Rectangle e_supplier_field_rect = {0};
 
     /* Category management panel */
     int delete_category_id = 0;
@@ -2535,7 +2571,13 @@ void gui_run(WmsDb *db) {
             panel = PANEL_ADD_PRODUCT;
             f_sku[0] = f_name[0] = f_price[0] = f_threshold[0] = f_initial_qty[0] = '\0';
             snprintf(f_unit, sizeof f_unit, "piece");
-            cat_dropdown_open = false; cat_adding_new = false; unit_dropdown_open = false; f_new_cat_input[0] = '\0';
+            f_brand[0] = f_description[0] = f_barcode[0] = '\0';
+            snprintf(f_status, sizeof f_status, "actif");
+            f_supplier_id = 0; f_supplier_name[0] = '\0';
+            f_supplier_count = db_list_suppliers(db, f_suppliers, 256);
+            cat_dropdown_open = false; cat_adding_new = false; unit_dropdown_open = false;
+            status_dropdown_open = false; supplier_dropdown_open = false;
+            f_new_cat_input[0] = '\0';
 
             /* Pre-fill with whichever category we're currently browsing,
                since a product added from inside "materiel bureautique"
@@ -2684,8 +2726,19 @@ void gui_run(WmsDb *db) {
                 e_category_id = p->category_id;
                 snprintf(e_category, sizeof e_category, "%s", p->category);
                 snprintf(e_unit, sizeof e_unit, "%s", p->unit[0] ? p->unit : "piece");
+                snprintf(e_brand, sizeof e_brand, "%s", p->brand);
+                snprintf(e_description, sizeof e_description, "%s", p->description);
+                snprintf(e_status, sizeof e_status, "%s", p->status[0] ? p->status : "actif");
+                e_supplier_id = p->supplier_id;
+                e_supplier_name[0] = '\0';
+                e_supplier_count = db_list_suppliers(db, e_suppliers, 256);
+                for (int si = 0; si < e_supplier_count; si++) {
+                    if (e_suppliers[si].id == p->supplier_id)
+                        snprintf(e_supplier_name, sizeof e_supplier_name, "%s", e_suppliers[si].name);
+                }
+                e_supplier_dropdown_open = false; e_status_dropdown_open = false;
                 panel = PANEL_EDIT_PRODUCT;
-                ee_name = true; ee_price = ee_threshold = false;
+                ee_name = true; ee_price = ee_threshold = ee_brand = ee_description = false;
             }
 
             row_y += 30;
@@ -2700,37 +2753,40 @@ void gui_run(WmsDb *db) {
         if (GuiButton((Rectangle){ table_x + 220, pag_y, 70, 30 }, "Suiv >") && !modal_active && page + 1 < page_count) page++;
         /* ---- Add product panel (modal-ish) ---- */
             if (panel == PANEL_ADD_PRODUCT) {
-            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 250, 440, 520 };
+            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 315, 440, 630 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, "Nouveau produit");
 
-                       bool *edit_flags[5] = { &edit_sku, &edit_name,
-                                     &edit_price, &edit_threshold, &edit_initial_qty };
-            bool any_focused = edit_sku || edit_name || edit_price ||
-                                edit_threshold || edit_initial_qty ||
-                                cat_dropdown_open || edit_new_cat || unit_dropdown_open;
+                       bool *edit_flags[8] = { &edit_sku, &edit_name, &edit_brand,
+                                     &edit_description, &edit_price, &edit_threshold,
+                                     &edit_barcode, &edit_initial_qty };
+            bool any_focused = edit_sku || edit_name || edit_brand || edit_description ||
+                                edit_price || edit_threshold || edit_barcode || edit_initial_qty ||
+                                cat_dropdown_open || edit_new_cat || unit_dropdown_open ||
+                                status_dropdown_open || supplier_dropdown_open;
             if (!any_focused) edit_sku = true;
 
-            /* While the category or unit dropdown is active, the 5-field
-               Tab/↑↓ navigation must not run at all - otherwise it fights
+            /* While any dropdown is active, the 8-field Tab/↑↓
+               navigation must not run at all - otherwise it fights
                with the dropdown for focus every frame. */
-            NavResult addproduct_nav = (cat_dropdown_open || unit_dropdown_open)
+            NavResult addproduct_nav = (cat_dropdown_open || unit_dropdown_open ||
+                                        status_dropdown_open || supplier_dropdown_open)
                 ? (NavResult){ false, false }
-                : nav_handle_focus(edit_flags, 5);
+                : nav_handle_focus(edit_flags, 8);
 
             float bx = box.x + 20, by = box.y + 40;
 
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "SKU");
             if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_sku, sizeof f_sku, edit_sku) && !addproduct_nav.moved) {
                 edit_sku = !edit_sku;
-                if (edit_sku) { edit_name = edit_price = edit_threshold = edit_initial_qty = false; }
+                if (edit_sku) { edit_name = edit_brand = edit_description = edit_price = edit_threshold = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Nom");
             if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_name, sizeof f_name, edit_name) && !addproduct_nav.moved) {
                 edit_name = !edit_name;
-                if (edit_name) { edit_sku = edit_price = edit_threshold = edit_initial_qty = false; }
+                if (edit_name) { edit_sku = edit_brand = edit_description = edit_price = edit_threshold = edit_initial_qty = false; }
             }
 
             by += 34;
@@ -2748,7 +2804,9 @@ void gui_run(WmsDb *db) {
                 cat_dropdown_open = !cat_dropdown_open;
                 cat_adding_new = false;
                 unit_dropdown_open = false;
-                edit_sku = edit_name = edit_price = edit_threshold = edit_initial_qty = false;
+                status_dropdown_open = false;
+                supplier_dropdown_open = false;
+                edit_sku = edit_name = edit_brand = edit_description = edit_price = edit_threshold = edit_initial_qty = false;
             }
 
             by += 44;
@@ -2764,28 +2822,85 @@ void gui_run(WmsDb *db) {
                 unit_dropdown_open = !unit_dropdown_open;
                 cat_dropdown_open = false;
                 cat_adding_new = false;
-                edit_sku = edit_name = edit_price = edit_threshold = edit_initial_qty = false;
+                status_dropdown_open = false;
+                supplier_dropdown_open = false;
+                edit_sku = edit_name = edit_brand = edit_description = edit_price = edit_threshold = edit_initial_qty = false;
+            }
+
+            by += 44;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Marque");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_brand, sizeof f_brand, edit_brand) && !addproduct_nav.moved) {
+                edit_brand = !edit_brand;
+                if (edit_brand) { edit_sku = edit_name = edit_description = edit_price = edit_threshold = edit_initial_qty = false; }
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Statut");
+            status_field_rect = (Rectangle){ bx + 110, by, 280, 24 };
+            bool status_hover = CheckCollisionPointRec(GetMousePosition(), status_field_rect);
+            DrawRectangleRec(status_field_rect, WHITE);
+            DrawRectangleLinesEx(status_field_rect, 1, status_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+            AppText(f_status, status_field_rect.x + 8, status_field_rect.y + 5, 14, (Color){30,41,59,255});
+            AppText(status_dropdown_open ? "^" : "v",
+                     status_field_rect.x + status_field_rect.width - 18, status_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
+            if (status_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                status_dropdown_open = !status_dropdown_open;
+                cat_dropdown_open = false; cat_adding_new = false;
+                unit_dropdown_open = false; supplier_dropdown_open = false;
+                edit_sku = edit_name = edit_brand = edit_description = edit_price = edit_threshold = edit_initial_qty = false;
+            }
+
+            by += 44;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Description");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_description, sizeof f_description, edit_description) && !addproduct_nav.moved) {
+                edit_description = !edit_description;
+                if (edit_description) { edit_sku = edit_name = edit_brand = edit_price = edit_threshold = edit_initial_qty = false; }
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Fournisseur");
+            supplier_field_rect = (Rectangle){ bx + 110, by, 280, 24 };
+            bool supplier_hover = CheckCollisionPointRec(GetMousePosition(), supplier_field_rect);
+            DrawRectangleRec(supplier_field_rect, WHITE);
+            DrawRectangleLinesEx(supplier_field_rect, 1, supplier_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+            AppText(f_supplier_name[0] ? f_supplier_name : "Choisir un fournisseur (optionnel)",
+                     supplier_field_rect.x + 8, supplier_field_rect.y + 5, 14,
+                     f_supplier_name[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
+            AppText(supplier_dropdown_open ? "^" : "v",
+                     supplier_field_rect.x + supplier_field_rect.width - 18, supplier_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
+            if (supplier_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                supplier_dropdown_open = !supplier_dropdown_open;
+                cat_dropdown_open = false; cat_adding_new = false;
+                unit_dropdown_open = false; status_dropdown_open = false;
+                edit_sku = edit_name = edit_brand = edit_description = edit_price = edit_threshold = edit_initial_qty = false;
+            }
+
+            by += 44;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Code barres");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, f_barcode, sizeof f_barcode, edit_barcode) && !addproduct_nav.moved) {
+                edit_barcode = !edit_barcode;
+                if (edit_barcode) { edit_sku = edit_name = edit_brand = edit_description = edit_price = edit_threshold = edit_initial_qty = false; }
             }
 
             by += 44;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Prix unitaire");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_price, sizeof f_price, edit_price) && !addproduct_nav.moved) {
                 edit_price = !edit_price;
-                if (edit_price) { edit_sku = edit_name = edit_threshold = edit_initial_qty = false; }
+                if (edit_price) { edit_sku = edit_name = edit_brand = edit_description = edit_threshold = edit_barcode = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Seuil alerte");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_threshold, sizeof f_threshold, edit_threshold) && !addproduct_nav.moved) {
                 edit_threshold = !edit_threshold;
-                if (edit_threshold) { edit_sku = edit_name = edit_price = edit_initial_qty = false; }
+                if (edit_threshold) { edit_sku = edit_name = edit_brand = edit_description = edit_price = edit_barcode = edit_initial_qty = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Quantite initiale");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, f_initial_qty, sizeof f_initial_qty, edit_initial_qty) && !addproduct_nav.moved) {
                 edit_initial_qty = !edit_initial_qty;
-                if (edit_initial_qty) { edit_sku = edit_name = edit_price = edit_threshold = false; }
+                if (edit_initial_qty) { edit_sku = edit_name = edit_brand = edit_description = edit_price = edit_threshold = edit_barcode = false; }
             }
 
             by += 50;
@@ -2795,7 +2910,8 @@ void gui_run(WmsDb *db) {
                dropdown list is drawn on top of this area, so a click on a
                dropdown row would otherwise ALSO register on whichever
                button happens to sit at that same pixel this frame. */
-            if (!cat_dropdown_open && !unit_dropdown_open) {
+            if (!cat_dropdown_open && !unit_dropdown_open &&
+                !status_dropdown_open && !supplier_dropdown_open) {
                 if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || addproduct_nav.submit) {
                     Product np = {0};
                     snprintf(np.sku, sizeof np.sku, "%s", f_sku);
@@ -2805,6 +2921,11 @@ void gui_run(WmsDb *db) {
                     np.unit_price = (float)atof(f_price);
                     np.alert_threshold = atoi(f_threshold);
                     np.category_id = f_category_id;
+                    snprintf(np.brand, sizeof np.brand, "%s", f_brand);
+                    snprintf(np.description, sizeof np.description, "%s", f_description);
+                    snprintf(np.status, sizeof np.status, "%s", f_status[0] ? f_status : "actif");
+                    snprintf(np.barcode, sizeof np.barcode, "%s", f_barcode);
+                    np.supplier_id = f_supplier_id;
 
                     char err[256];
                     if (!validate_product_fields(f_sku, f_name, f_price, f_threshold,
@@ -2925,20 +3046,65 @@ void gui_run(WmsDb *db) {
                     }
                 }
             }
+
+            if (status_dropdown_open) {
+                float row_h = 26;
+                Rectangle dd = { status_field_rect.x, status_field_rect.y + status_field_rect.height + 2,
+                                  status_field_rect.width, row_h * STATUS_OPTION_COUNT };
+                DrawRectangleRec(dd, WHITE);
+                DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+                for (int si = 0; si < STATUS_OPTION_COUNT; si++) {
+                    Rectangle row = { dd.x, dd.y + si * row_h, dd.width, row_h };
+                    bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                    bool selected = (strcmp(f_status, STATUS_OPTIONS[si]) == 0);
+                    if (hover || selected) DrawRectangleRec(row, (Color){239,246,255,255});
+                    AppText(STATUS_OPTIONS[si], row.x + 8, row.y + 5, 14, (Color){30,41,59,255});
+                    if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        snprintf(f_status, sizeof f_status, "%s", STATUS_OPTIONS[si]);
+                        status_dropdown_open = false;
+                    }
+                }
+            }
+
+            if (supplier_dropdown_open) {
+                float row_h = 26;
+                Rectangle dd = { supplier_field_rect.x, supplier_field_rect.y + supplier_field_rect.height + 2,
+                                  supplier_field_rect.width, row_h * (f_supplier_count > 0 ? f_supplier_count : 1) };
+                DrawRectangleRec(dd, WHITE);
+                DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+                if (f_supplier_count > 0) {
+                    for (int si = 0; si < f_supplier_count; si++) {
+                        Rectangle row = { dd.x, dd.y + si * row_h, dd.width, row_h };
+                        bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                        if (hover) DrawRectangleRec(row, (Color){239,246,255,255});
+                        AppText(f_suppliers[si].name, row.x + 8, row.y + 5, 14, (Color){30,41,59,255});
+                        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                            f_supplier_id = f_suppliers[si].id;
+                            snprintf(f_supplier_name, sizeof f_supplier_name, "%s", f_suppliers[si].name);
+                            supplier_dropdown_open = false;
+                        }
+                    }
+                } else {
+                    Rectangle row = { dd.x, dd.y, dd.width, row_h };
+                    AppText("Aucun fournisseur disponible", row.x + 8, row.y + 5, 14, COLOR_TEXT_MUTED);
+                }
+            }
         }
 
                 /* ---- Edit product panel ---- */
         if (panel == PANEL_EDIT_PRODUCT) {
-            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 235, 440, 470 };
+            Rectangle box = { GetScreenWidth()/2 - 220, GetScreenHeight()/2 - 285, 440, 570 };
             DrawRectangleRec((Rectangle){0,0,(float)GetScreenWidth(),(float)GetScreenHeight()}, (Color){0,0,0,80});
             GuiPanel(box, "Modifier le produit");
 
-            bool *e_flags[3] = { &ee_name, &ee_price, &ee_threshold };
-            bool e_any = ee_name || ee_price || ee_threshold || e_cat_dropdown_open || e_unit_dropdown_open;
+            bool *e_flags[5] = { &ee_name, &ee_price, &ee_threshold, &ee_brand, &ee_description };
+            bool e_any = ee_name || ee_price || ee_threshold || ee_brand || ee_description ||
+                         e_cat_dropdown_open || e_unit_dropdown_open || e_status_dropdown_open || e_supplier_dropdown_open;
             if (!e_any) ee_name = true;
-            NavResult edit_nav = (e_cat_dropdown_open || e_unit_dropdown_open)
+            NavResult edit_nav = (e_cat_dropdown_open || e_unit_dropdown_open ||
+                                  e_status_dropdown_open || e_supplier_dropdown_open)
                 ? (NavResult){ false, false }
-                : nav_handle_focus(e_flags, 3);
+                : nav_handle_focus(e_flags, 5);
 
             float bx = box.x + 20, by = box.y + 40;
 
@@ -2962,6 +3128,8 @@ void gui_run(WmsDb *db) {
                         if (e_cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 e_cat_dropdown_open = !e_cat_dropdown_open;
                 e_unit_dropdown_open = false;
+                e_status_dropdown_open = false;
+                e_supplier_dropdown_open = false;
                 ee_name = ee_price = ee_threshold = false;
             }
 
@@ -2977,25 +3145,77 @@ void gui_run(WmsDb *db) {
             if (e_unit_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 e_unit_dropdown_open = !e_unit_dropdown_open;
                 e_cat_dropdown_open = false;
+                e_status_dropdown_open = false;
+                e_supplier_dropdown_open = false;
                 ee_name = ee_price = ee_threshold = false;
+            }
+
+            by += 44;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Marque");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, e_brand, sizeof e_brand, ee_brand) && !edit_nav.moved) {
+                ee_brand = !ee_brand;
+                if (ee_brand) { ee_name = ee_price = ee_threshold = ee_description = false; }
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Statut");
+            e_status_field_rect = (Rectangle){ bx + 110, by, 280, 24 };
+            bool e_status_hover = CheckCollisionPointRec(GetMousePosition(), e_status_field_rect);
+            DrawRectangleRec(e_status_field_rect, WHITE);
+            DrawRectangleLinesEx(e_status_field_rect, 1, e_status_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+            AppText(e_status, e_status_field_rect.x + 8, e_status_field_rect.y + 5, 14, (Color){30,41,59,255});
+            AppText(e_status_dropdown_open ? "^" : "v",
+                     e_status_field_rect.x + e_status_field_rect.width - 18, e_status_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
+            if (e_status_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                e_status_dropdown_open = !e_status_dropdown_open;
+                e_cat_dropdown_open = false;
+                e_unit_dropdown_open = false;
+                e_supplier_dropdown_open = false;
+                ee_name = ee_price = ee_threshold = ee_brand = ee_description = false;
+            }
+
+            by += 44;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Description");
+            if (GuiTextBox((Rectangle){ bx + 110, by, 280, 24 }, e_description, sizeof e_description, ee_description) && !edit_nav.moved) {
+                ee_description = !ee_description;
+                if (ee_description) { ee_name = ee_price = ee_threshold = ee_brand = false; }
+            }
+
+            by += 34;
+            GuiLabel((Rectangle){ bx, by, 100, 24 }, "Fournisseur");
+            e_supplier_field_rect = (Rectangle){ bx + 110, by, 280, 24 };
+            bool e_supplier_hover = CheckCollisionPointRec(GetMousePosition(), e_supplier_field_rect);
+            DrawRectangleRec(e_supplier_field_rect, WHITE);
+            DrawRectangleLinesEx(e_supplier_field_rect, 1, e_supplier_dropdown_open ? COLOR_ACCENT_BLUE : COLOR_BORDER);
+            AppText(e_supplier_name[0] ? e_supplier_name : "Choisir un fournisseur (optionnel)",
+                     e_supplier_field_rect.x + 8, e_supplier_field_rect.y + 5, 14,
+                     e_supplier_name[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
+            AppText(e_supplier_dropdown_open ? "^" : "v",
+                     e_supplier_field_rect.x + e_supplier_field_rect.width - 18, e_supplier_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
+            if (e_supplier_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                e_supplier_dropdown_open = !e_supplier_dropdown_open;
+                e_cat_dropdown_open = false;
+                e_unit_dropdown_open = false;
+                e_status_dropdown_open = false;
+                ee_name = ee_price = ee_threshold = ee_brand = ee_description = false;
             }
 
             by += 44;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Prix unitaire");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, e_price, sizeof e_price, ee_price) && !edit_nav.moved) {
                 ee_price = !ee_price;
-                if (ee_price) { ee_name = ee_threshold = false; }
+                if (ee_price) { ee_name = ee_threshold = ee_brand = ee_description = false; }
             }
 
             by += 34;
             GuiLabel((Rectangle){ bx, by, 100, 24 }, "Seuil alerte");
             if (GuiTextBox((Rectangle){ bx + 110, by, 130, 24 }, e_threshold, sizeof e_threshold, ee_threshold) && !edit_nav.moved) {
                 ee_threshold = !ee_threshold;
-                if (ee_threshold) { ee_name = ee_price = false; }
+                if (ee_threshold) { ee_name = ee_price = ee_brand = ee_description = false; }
             }
 
             by += 50;
-            if (!e_cat_dropdown_open && !e_unit_dropdown_open) {
+            if (!e_cat_dropdown_open && !e_unit_dropdown_open && !e_status_dropdown_open && !e_supplier_dropdown_open) {
                 if (GuiButton((Rectangle){ bx, by, 130, 32 }, "Enregistrer") || edit_nav.submit) {
                     Product upd = {0};
                     upd.id = edit_product_id;
@@ -3006,6 +3226,10 @@ void gui_run(WmsDb *db) {
                     snprintf(upd.unit, sizeof upd.unit, "%s", e_unit);
                     upd.unit_price = (float)atof(e_price);
                     upd.alert_threshold = atoi(e_threshold);
+                    snprintf(upd.brand, sizeof upd.brand, "%s", e_brand);
+                    snprintf(upd.description, sizeof upd.description, "%s", e_description);
+                    snprintf(upd.status, sizeof upd.status, "%s", e_status[0] ? e_status : "actif");
+                    upd.supplier_id = e_supplier_id;
 
                     char err[256];
                     if (!validate_product_fields(NULL, e_name, e_price, e_threshold,
@@ -3059,6 +3283,49 @@ void gui_run(WmsDb *db) {
                         snprintf(e_unit, sizeof e_unit, "%s", UNIT_OPTIONS[ui]);
                         e_unit_dropdown_open = false;
                     }
+                }
+            }
+
+            if (e_status_dropdown_open) {
+                float row_h = 26;
+                Rectangle dd = { e_status_field_rect.x, e_status_field_rect.y + e_status_field_rect.height + 2,
+                                  e_status_field_rect.width, row_h * STATUS_OPTION_COUNT };
+                DrawRectangleRec(dd, WHITE);
+                DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+                for (int si = 0; si < STATUS_OPTION_COUNT; si++) {
+                    Rectangle row = { dd.x, dd.y + si * row_h, dd.width, row_h };
+                    bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                    bool selected = (strcmp(e_status, STATUS_OPTIONS[si]) == 0);
+                    if (hover || selected) DrawRectangleRec(row, (Color){239,246,255,255});
+                    AppText(STATUS_OPTIONS[si], row.x + 8, row.y + 5, 14, (Color){30,41,59,255});
+                    if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        snprintf(e_status, sizeof e_status, "%s", STATUS_OPTIONS[si]);
+                        e_status_dropdown_open = false;
+                    }
+                }
+            }
+
+            if (e_supplier_dropdown_open) {
+                float row_h = 26;
+                Rectangle dd = { e_supplier_field_rect.x, e_supplier_field_rect.y + e_supplier_field_rect.height + 2,
+                                  e_supplier_field_rect.width, row_h * (e_supplier_count > 0 ? e_supplier_count : 1) };
+                DrawRectangleRec(dd, WHITE);
+                DrawRectangleLinesEx(dd, 1, COLOR_BORDER);
+                if (e_supplier_count > 0) {
+                    for (int si = 0; si < e_supplier_count; si++) {
+                        Rectangle row = { dd.x, dd.y + si * row_h, dd.width, row_h };
+                        bool hover = CheckCollisionPointRec(GetMousePosition(), row);
+                        if (hover) DrawRectangleRec(row, (Color){239,246,255,255});
+                        AppText(e_suppliers[si].name, row.x + 8, row.y + 5, 14, (Color){30,41,59,255});
+                        if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                            e_supplier_id = e_suppliers[si].id;
+                            snprintf(e_supplier_name, sizeof e_supplier_name, "%s", e_suppliers[si].name);
+                            e_supplier_dropdown_open = false;
+                        }
+                    }
+                } else {
+                    Rectangle row = { dd.x, dd.y, dd.width, row_h };
+                    AppText("Aucun fournisseur disponible", row.x + 8, row.y + 5, 14, COLOR_TEXT_MUTED);
                 }
             }
         }
@@ -3484,7 +3751,11 @@ if (IsKeyPressed(KEY_F2)) {
     panel = PANEL_ADD_PRODUCT;
     f_sku[0] = f_name[0] = f_price[0] = f_threshold[0] = '\0';
     snprintf(f_unit, sizeof f_unit, "piece");
-    unit_dropdown_open = false;
+    f_brand[0] = f_description[0] = '\0';
+    snprintf(f_status, sizeof f_status, "actif");
+    f_supplier_id = 0; f_supplier_name[0] = '\0';
+    f_supplier_count = db_list_suppliers(db, f_suppliers, 256);
+    unit_dropdown_open = false; status_dropdown_open = false; supplier_dropdown_open = false;
     if (g_active_category_id > 0) {
         f_category_id = g_active_category_id;
         snprintf(f_category, sizeof f_category, "%s", g_active_category_name);
