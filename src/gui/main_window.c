@@ -2711,11 +2711,23 @@ void gui_run(WmsDb *db) {
                 DrawText("OK", col_alert, row_y, 12, (Color){ 40, 150, 70, 255 });
             }
 
-            Rectangle row_modify_btn = { GetScreenWidth() - table_x - 90, row_y - 4, 80, 22 };
+            /* Row actions: Modifier + Supprimer. Supprimer opens the same
+               archive-confirm dialog as the toolbar "Archiver" button. */
+            Rectangle row_modify_btn = { GetScreenWidth() - table_x - 172, row_y - 4, 80, 22 };
+            Rectangle row_del_btn    = { GetScreenWidth() - table_x - 84, row_y - 4, 80, 22 };
             bool row_modify_hover = CheckCollisionPointRec(GetMousePosition(), row_modify_btn) && !modal_active;
+            bool row_del_hover    = CheckCollisionPointRec(GetMousePosition(), row_del_btn) && !modal_active;
             DrawRectangleLinesEx(row_modify_btn, 1, COLOR_BORDER);
             if (row_modify_hover) DrawRectangleRec(row_modify_btn, (Color){239,246,255,255});
             AppText("Modifier", row_modify_btn.x + 8, row_modify_btn.y + 4, 12, (Color){30,41,59,255});
+            DrawRectangleLinesEx(row_del_btn, 1, COLOR_BORDER);
+            if (row_del_hover) DrawRectangleRec(row_del_btn, (Color){254,242,242,255});
+            AppText("Supprimer", row_del_btn.x + 8, row_del_btn.y + 4, 12, (Color){185,28,28,255});
+            if (row_del_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                selected_product_id = p->id;
+                edit_product_id = p->id;
+                panel = PANEL_CONFIRM_DELETE_PRODUCT;
+            }
             if (row_modify_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
                 selected_product_id = p->id;
                 edit_product_id = p->id;
@@ -2800,7 +2812,8 @@ void gui_run(WmsDb *db) {
                      f_category[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
             AppText(cat_dropdown_open ? "^" : "v",
                      cat_field_rect.x + cat_field_rect.width - 18, cat_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-                       if (cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                       if (cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                           && !unit_dropdown_open && !status_dropdown_open && !supplier_dropdown_open) {
                 cat_dropdown_open = !cat_dropdown_open;
                 cat_adding_new = false;
                 unit_dropdown_open = false;
@@ -2818,7 +2831,8 @@ void gui_run(WmsDb *db) {
             AppText(f_unit, unit_field_rect.x + 8, unit_field_rect.y + 5, 14, (Color){30,41,59,255});
             AppText(unit_dropdown_open ? "^" : "v",
                      unit_field_rect.x + unit_field_rect.width - 18, unit_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-            if (unit_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (unit_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                && !cat_dropdown_open && !status_dropdown_open && !supplier_dropdown_open) {
                 unit_dropdown_open = !unit_dropdown_open;
                 cat_dropdown_open = false;
                 cat_adding_new = false;
@@ -2843,7 +2857,8 @@ void gui_run(WmsDb *db) {
             AppText(f_status, status_field_rect.x + 8, status_field_rect.y + 5, 14, (Color){30,41,59,255});
             AppText(status_dropdown_open ? "^" : "v",
                      status_field_rect.x + status_field_rect.width - 18, status_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-            if (status_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (status_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                && !cat_dropdown_open && !unit_dropdown_open && !supplier_dropdown_open) {
                 status_dropdown_open = !status_dropdown_open;
                 cat_dropdown_open = false; cat_adding_new = false;
                 unit_dropdown_open = false; supplier_dropdown_open = false;
@@ -2868,7 +2883,8 @@ void gui_run(WmsDb *db) {
                      f_supplier_name[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
             AppText(supplier_dropdown_open ? "^" : "v",
                      supplier_field_rect.x + supplier_field_rect.width - 18, supplier_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-            if (supplier_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (supplier_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                && !cat_dropdown_open && !unit_dropdown_open && !status_dropdown_open) {
                 supplier_dropdown_open = !supplier_dropdown_open;
                 cat_dropdown_open = false; cat_adding_new = false;
                 unit_dropdown_open = false; status_dropdown_open = false;
@@ -3125,7 +3141,8 @@ void gui_run(WmsDb *db) {
                      e_category[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
             AppText(e_cat_dropdown_open ? "^" : "v",
                      e_cat_field_rect.x + e_cat_field_rect.width - 18, e_cat_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-                        if (e_cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+                        if (e_cat_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                            && !e_unit_dropdown_open && !e_status_dropdown_open && !e_supplier_dropdown_open) {
                 e_cat_dropdown_open = !e_cat_dropdown_open;
                 e_unit_dropdown_open = false;
                 e_status_dropdown_open = false;
@@ -3142,7 +3159,8 @@ void gui_run(WmsDb *db) {
             AppText(e_unit, e_unit_field_rect.x + 8, e_unit_field_rect.y + 5, 14, (Color){30,41,59,255});
             AppText(e_unit_dropdown_open ? "^" : "v",
                      e_unit_field_rect.x + e_unit_field_rect.width - 18, e_unit_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-            if (e_unit_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (e_unit_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                && !e_cat_dropdown_open && !e_status_dropdown_open && !e_supplier_dropdown_open) {
                 e_unit_dropdown_open = !e_unit_dropdown_open;
                 e_cat_dropdown_open = false;
                 e_status_dropdown_open = false;
@@ -3166,7 +3184,8 @@ void gui_run(WmsDb *db) {
             AppText(e_status, e_status_field_rect.x + 8, e_status_field_rect.y + 5, 14, (Color){30,41,59,255});
             AppText(e_status_dropdown_open ? "^" : "v",
                      e_status_field_rect.x + e_status_field_rect.width - 18, e_status_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-            if (e_status_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (e_status_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                && !e_cat_dropdown_open && !e_unit_dropdown_open && !e_supplier_dropdown_open) {
                 e_status_dropdown_open = !e_status_dropdown_open;
                 e_cat_dropdown_open = false;
                 e_unit_dropdown_open = false;
@@ -3192,7 +3211,8 @@ void gui_run(WmsDb *db) {
                      e_supplier_name[0] ? (Color){30,41,59,255} : COLOR_TEXT_MUTED);
             AppText(e_supplier_dropdown_open ? "^" : "v",
                      e_supplier_field_rect.x + e_supplier_field_rect.width - 18, e_supplier_field_rect.y + 5, 14, COLOR_TEXT_MUTED);
-            if (e_supplier_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            if (e_supplier_hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)
+                && !e_cat_dropdown_open && !e_unit_dropdown_open && !e_status_dropdown_open) {
                 e_supplier_dropdown_open = !e_supplier_dropdown_open;
                 e_cat_dropdown_open = false;
                 e_unit_dropdown_open = false;
