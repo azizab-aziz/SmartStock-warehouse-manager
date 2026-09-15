@@ -606,6 +606,12 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         cat_tx += 170 + cat_btn_gap;
     }
 
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 140, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 140, sh }, "Fournisseurs") && !modal_active) {
+        g_screen = SCREEN_SUPPLIERS;
+    }
+    cat_tx += 140 + cat_btn_gap;
+
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 190, sx, sh);
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 190, sh }, "+ Ajouter categorie") && !modal_active) {
         *cat_screen_panel = PANEL_ADD_PRODUCT; /* reused as a generic "add category" dialog trigger below */
