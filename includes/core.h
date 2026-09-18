@@ -142,4 +142,20 @@ bool inv_receive_po_item(int po_id, int po_item_id, int product_id,
                           int already_received, int new_received_qty,
                           const char *po_number, const Session *session,
                           char *err_out, size_t err_len);
+/* Ships (fully or partially) one dispatch-order line item: posts an
+ * MV_EXPEDITION stock movement for the newly-shipped delta (negative -
+ * inv_post_movement's own "quantity + delta >= 0" guard naturally blocks
+ * shipping more than is in stock, no separate check needed here), updates
+ * the item's quantity_shipped, and auto-updates the parent order's status. */
+bool inv_ship_do_item(int do_id, int do_item_id, int product_id,
+                       int already_shipped, int new_shipped_qty,
+                       const char *do_number, const Session *session,
+                       char *err_out, size_t err_len);
+/* Processes a customer return: posts an MV_RETOUR movement (stock back
+ * in) through the same atomic path, and logs the return itself
+ * (quantity, reason, who processed it, optional linked dispatch order). */
+bool inv_process_return(int do_id, int product_id, int quantity,
+                         const char *reason, const Session *session,
+                         char *err_out, size_t err_len);
+
 #endif
