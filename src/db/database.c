@@ -164,7 +164,7 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
         "  received_at TEXT"
         ");", NULL, NULL, NULL);
 
-        sqlite3_exec(db->handle,
+            sqlite3_exec(db->handle,
         "CREATE TABLE IF NOT EXISTS purchase_order_items ("
         "  id INTEGER PRIMARY KEY,"
         "  po_id INTEGER NOT NULL REFERENCES purchase_orders(id),"
@@ -174,6 +174,49 @@ bool db_apply_schema(WmsDb *db, const char *schema_sql_path) {
         "  unit_cost REAL NOT NULL DEFAULT 0"
         ");", NULL, NULL, NULL);
 
+    sqlite3_exec(db->handle,
+        "CREATE TABLE IF NOT EXISTS customers ("
+        "  id INTEGER PRIMARY KEY,"
+        "  name TEXT NOT NULL,"
+        "  contact_name TEXT,"
+        "  phone TEXT,"
+        "  email TEXT,"
+        "  address TEXT,"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ");", NULL, NULL, NULL);
+
+    sqlite3_exec(db->handle,
+        "CREATE TABLE IF NOT EXISTS dispatch_orders ("
+        "  id INTEGER PRIMARY KEY,"
+        "  customer_id INTEGER REFERENCES customers(id),"
+        "  do_number TEXT UNIQUE NOT NULL,"
+        "  status TEXT NOT NULL DEFAULT 'brouillon',"
+        "  reference TEXT,"
+        "  created_by INTEGER REFERENCES users(id),"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now')),"
+        "  shipped_at TEXT"
+        ");", NULL, NULL, NULL);
+
+    sqlite3_exec(db->handle,
+        "CREATE TABLE IF NOT EXISTS dispatch_order_items ("
+        "  id INTEGER PRIMARY KEY,"
+        "  do_id INTEGER NOT NULL REFERENCES dispatch_orders(id),"
+        "  product_id INTEGER REFERENCES products(id),"
+        "  quantity_ordered INTEGER NOT NULL,"
+        "  quantity_shipped INTEGER NOT NULL DEFAULT 0,"
+        "  unit_price REAL NOT NULL DEFAULT 0"
+        ");", NULL, NULL, NULL);
+
+    sqlite3_exec(db->handle,
+        "CREATE TABLE IF NOT EXISTS returns ("
+        "  id INTEGER PRIMARY KEY,"
+        "  do_id INTEGER REFERENCES dispatch_orders(id),"
+        "  product_id INTEGER REFERENCES products(id),"
+        "  quantity INTEGER NOT NULL,"
+        "  reason TEXT,"
+        "  processed_by INTEGER REFERENCES users(id),"
+        "  created_at TEXT NOT NULL DEFAULT (datetime('now'))"
+        ");", NULL, NULL, NULL);
     sqlite3_exec(db->handle,
         "CREATE TABLE IF NOT EXISTS audit_log ("
         "  id INTEGER PRIMARY KEY,"
@@ -694,6 +737,265 @@ int db_list_audit_log(WmsDb *db, AuditLogEntry *out, int max_count) {
         snprintf(e->entity_label, sizeof e->entity_label, "%s", (const char*)sqlite3_column_text(st, 5));
         snprintf(e->details, sizeof e->details, "%s", (const char*)sqlite3_column_text(st, 6));
         snprintf(e->created_at, sizeof e->created_at, "%s", (const char*)sqlite3_column_text(st, 7));
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+int db_list_customers(WmsDb *db, Customer *out, int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT id, name, COALESCE(contact_name,''), COALESCE(phone,''), "
+        "COALESCE(email,''), COALESCE(address,'') FROM customers ORDER BY name COLLATE NOCASE;",
+        -1, &st, NULL);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        out[n].id = sqlite3_column_int(st, 0);
+        snprintf(out[n].name, sizeof out[n].name, "%s", (const char*)sqlite3_column_text(st, 1));
+        snprintf(out[n].contact_name, sizeof out[n].contact_name, "%s", (const char*)sqlite3_column_text(st, 2));
+        snprintf(out[n].phone, sizeof out[n].phone, "%s", (const char*)sqlite3_column_text(st, 3));
+        snprintf(out[n].email, sizeof out[n].email, "%s", (const char*)sqlite3_column_text(st, 4));
+        snprintf(out[n].address, sizeof out[n].address, "%s", (const char*)sqlite3_column_text(st, 5));
+        n++;
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+bool db_create_customer(WmsDb *db, const Customer *c, char *err_out, size_t err_len) {
+    if (!c->name[0]) { snprintf(err_out, err_len, "Le nom du client est obligatoire"); return false; }
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO customers (name, contact_name, phone, email, address) VALUES (?,?,?,?,?);",
+        -1, &st, NULL);
+    sqlite3_bind_text(st, 1, c->name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, c->contact_name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, c->phone, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 4, c->email, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 5, c->address, -1, SQLITE_TRANSIENT);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle));
+    sqlite3_finalize(st);
+    return ok;
+}
+
+bool db_update_customer(WmsDb *db, const Customer *c, char *err_out, size_t err_len) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "UPDATE customers SET name=?, contact_name=?, phone=?, email=?, address=? WHERE id=?;",
+        -1, &st, NULL);
+    sqlite3_bind_text(st, 1, c->name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 2, c->contact_name, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, c->phone, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 4, c->email, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 5, c->address, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 6, c->id);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle));
+    sqlite3_finalize(st);
+    return ok;
+}
+
+bool db_delete_customer(WmsDb *db, int customer_id, char *err_out, size_t err_len) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT COUNT(*) FROM dispatch_orders WHERE customer_id=?;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, customer_id);
+    int in_use = 0;
+    if (sqlite3_step(st) == SQLITE_ROW) in_use = sqlite3_column_int(st, 0);
+    sqlite3_finalize(st);
+    if (in_use > 0) {
+        snprintf(err_out, err_len, "Impossible: %d commande(s) client existent deja pour ce client", in_use);
+        return false;
+    }
+    sqlite3_prepare_v2(db->handle, "DELETE FROM customers WHERE id=?;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, customer_id);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle));
+    sqlite3_finalize(st);
+    return ok;
+}
+
+bool db_create_dispatch_order(WmsDb *db, int customer_id, int created_by,
+                               const char *reference, int *out_do_id,
+                               char *err_out, size_t err_len) {
+    int next_num = 1;
+    sqlite3_stmt *num_st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT COALESCE(MAX(CAST(SUBSTR(do_number,4) AS INTEGER)),0)+1 FROM dispatch_orders;",
+        -1, &num_st, NULL);
+    if (sqlite3_step(num_st) == SQLITE_ROW) next_num = sqlite3_column_int(num_st, 0);
+    sqlite3_finalize(num_st);
+
+    char do_number[32];
+    snprintf(do_number, sizeof do_number, "BL-%04d", next_num);
+
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO dispatch_orders (customer_id, do_number, status, reference, created_by) "
+        "VALUES (?,?,'brouillon',?,?);", -1, &st, NULL);
+    if (customer_id > 0) sqlite3_bind_int(st, 1, customer_id); else sqlite3_bind_null(st, 1);
+    sqlite3_bind_text(st, 2, do_number, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_text(st, 3, reference ? reference : "", -1, SQLITE_TRANSIENT);
+    if (created_by > 0) sqlite3_bind_int(st, 4, created_by); else sqlite3_bind_null(st, 4);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) {
+        snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle));
+        sqlite3_finalize(st);
+        return false;
+    }
+    *out_do_id = (int)sqlite3_last_insert_rowid(db->handle);
+    sqlite3_finalize(st);
+    return true;
+}
+
+bool db_add_do_item(WmsDb *db, int do_id, int product_id, int quantity_ordered,
+                    double unit_price, char *err_out, size_t err_len) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO dispatch_order_items (do_id, product_id, quantity_ordered, unit_price) "
+        "VALUES (?,?,?,?);", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, do_id);
+    sqlite3_bind_int(st, 2, product_id);
+    sqlite3_bind_int(st, 3, quantity_ordered);
+    sqlite3_bind_double(st, 4, unit_price);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle));
+    sqlite3_finalize(st);
+    return ok;
+}
+
+int db_list_dispatch_orders(WmsDb *db, DispatchOrder *out, int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT d.id, COALESCE(d.customer_id,0), COALESCE(c.name,'Sans client'), "
+        "d.do_number, d.status, COALESCE(d.reference,''), COALESCE(d.created_by,0), "
+        "COALESCE(u.username,''), d.created_at, COALESCE(d.shipped_at,'') "
+        "FROM dispatch_orders d "
+        "LEFT JOIN customers c ON c.id = d.customer_id "
+        "LEFT JOIN users u ON u.id = d.created_by "
+        "ORDER BY d.created_at DESC, d.id DESC;", -1, &st, NULL);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        DispatchOrder *p = &out[n++];
+        memset(p, 0, sizeof(*p));
+        p->id = sqlite3_column_int(st, 0);
+        p->customer_id = sqlite3_column_int(st, 1);
+        snprintf(p->customer_name, sizeof p->customer_name, "%s", (const char*)sqlite3_column_text(st, 2));
+        snprintf(p->do_number, sizeof p->do_number, "%s", (const char*)sqlite3_column_text(st, 3));
+        snprintf(p->status, sizeof p->status, "%s", (const char*)sqlite3_column_text(st, 4));
+        snprintf(p->reference, sizeof p->reference, "%s", (const char*)sqlite3_column_text(st, 5));
+        p->created_by = sqlite3_column_int(st, 6);
+        snprintf(p->created_by_name, sizeof p->created_by_name, "%s", (const char*)sqlite3_column_text(st, 7));
+        snprintf(p->created_at, sizeof p->created_at, "%s", (const char*)sqlite3_column_text(st, 8));
+        snprintf(p->shipped_at, sizeof p->shipped_at, "%s", (const char*)sqlite3_column_text(st, 9));
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+int db_get_do_items(WmsDb *db, int do_id, DispatchOrderItem *out, int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT doi.id, doi.do_id, doi.product_id, COALESCE(p.name,'Produit supprime'), "
+        "COALESCE(p.sku,''), doi.quantity_ordered, doi.quantity_shipped, doi.unit_price "
+        "FROM dispatch_order_items doi LEFT JOIN products p ON p.id = doi.product_id "
+        "WHERE doi.do_id = ?1 ORDER BY doi.id;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, do_id);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        DispatchOrderItem *it = &out[n++];
+        memset(it, 0, sizeof(*it));
+        it->id = sqlite3_column_int(st, 0);
+        it->do_id = sqlite3_column_int(st, 1);
+        it->product_id = sqlite3_column_int(st, 2);
+        snprintf(it->product_name, sizeof it->product_name, "%s", (const char*)sqlite3_column_text(st, 3));
+        snprintf(it->product_sku, sizeof it->product_sku, "%s", (const char*)sqlite3_column_text(st, 4));
+        it->quantity_ordered = sqlite3_column_int(st, 5);
+        it->quantity_shipped = sqlite3_column_int(st, 6);
+        it->unit_price = sqlite3_column_double(st, 7);
+    }
+    sqlite3_finalize(st);
+    return n;
+}
+
+bool db_update_do_item_shipped(WmsDb *db, int do_item_id, int new_shipped_qty,
+                                 char *err_out, size_t err_len) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "UPDATE dispatch_order_items SET quantity_shipped=? WHERE id=?;", -1, &st, NULL);
+    sqlite3_bind_int(st, 1, new_shipped_qty);
+    sqlite3_bind_int(st, 2, do_item_id);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle));
+    sqlite3_finalize(st);
+    return ok;
+}
+
+bool db_update_do_status(WmsDb *db, int do_id, const char *new_status) {
+    sqlite3_stmt *st;
+    if (strcmp(new_status, "expedie") == 0) {
+        sqlite3_prepare_v2(db->handle,
+            "UPDATE dispatch_orders SET status=?, shipped_at=datetime('now') WHERE id=?;", -1, &st, NULL);
+    } else {
+        sqlite3_prepare_v2(db->handle,
+            "UPDATE dispatch_orders SET status=? WHERE id=?;", -1, &st, NULL);
+    }
+    sqlite3_bind_text(st, 1, new_status, -1, SQLITE_TRANSIENT);
+    sqlite3_bind_int(st, 2, do_id);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    sqlite3_finalize(st);
+    return ok;
+}
+
+bool db_create_return(WmsDb *db, int do_id, int product_id, int quantity,
+                       const char *reason, int processed_by, int *out_return_id,
+                       char *err_out, size_t err_len) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "INSERT INTO returns (do_id, product_id, quantity, reason, processed_by) "
+        "VALUES (?,?,?,?,?);", -1, &st, NULL);
+    if (do_id > 0) sqlite3_bind_int(st, 1, do_id); else sqlite3_bind_null(st, 1);
+    sqlite3_bind_int(st, 2, product_id);
+    sqlite3_bind_int(st, 3, quantity);
+    sqlite3_bind_text(st, 4, reason ? reason : "", -1, SQLITE_TRANSIENT);
+    if (processed_by > 0) sqlite3_bind_int(st, 5, processed_by); else sqlite3_bind_null(st, 5);
+    bool ok = sqlite3_step(st) == SQLITE_DONE;
+    if (!ok) {
+        snprintf(err_out, err_len, "%s", sqlite3_errmsg(db->handle));
+        sqlite3_finalize(st);
+        return false;
+    }
+    *out_return_id = (int)sqlite3_last_insert_rowid(db->handle);
+    sqlite3_finalize(st);
+    return true;
+}
+
+int db_list_returns(WmsDb *db, ReturnRecord *out, int max_count) {
+    sqlite3_stmt *st;
+    sqlite3_prepare_v2(db->handle,
+        "SELECT r.id, COALESCE(r.do_id,0), COALESCE(d.do_number,''), r.product_id, "
+        "COALESCE(p.name,'Produit supprime'), r.quantity, COALESCE(r.reason,''), "
+        "COALESCE(r.processed_by,0), COALESCE(u.username,''), r.created_at "
+        "FROM returns r "
+        "LEFT JOIN dispatch_orders d ON d.id = r.do_id "
+        "LEFT JOIN products p ON p.id = r.product_id "
+        "LEFT JOIN users u ON u.id = r.processed_by "
+        "ORDER BY r.created_at DESC, r.id DESC;", -1, &st, NULL);
+    int n = 0;
+    while (n < max_count && sqlite3_step(st) == SQLITE_ROW) {
+        ReturnRecord *r = &out[n++];
+        memset(r, 0, sizeof(*r));
+        r->id = sqlite3_column_int(st, 0);
+        r->do_id = sqlite3_column_int(st, 1);
+        snprintf(r->do_number, sizeof r->do_number, "%s", (const char*)sqlite3_column_text(st, 2));
+        r->product_id = sqlite3_column_int(st, 3);
+        snprintf(r->product_name, sizeof r->product_name, "%s", (const char*)sqlite3_column_text(st, 4));
+        r->quantity = sqlite3_column_int(st, 5);
+        snprintf(r->reason, sizeof r->reason, "%s", (const char*)sqlite3_column_text(st, 6));
+        r->processed_by = sqlite3_column_int(st, 7);
+        snprintf(r->processed_by_name, sizeof r->processed_by_name, "%s", (const char*)sqlite3_column_text(st, 8));
+        snprintf(r->created_at, sizeof r->created_at, "%s", (const char*)sqlite3_column_text(st, 9));
     }
     sqlite3_finalize(st);
     return n;
