@@ -142,5 +142,73 @@ bool db_update_po_item_received(WmsDb *db, int po_item_id, int new_received_qty,
                                  char *err_out, size_t err_len);
 bool db_update_po_status(WmsDb *db, int po_id, const char *new_status);
 
+typedef struct {
+    int  id;
+    char name[128];
+    char contact_name[128];
+    char phone[32];
+    char email[128];
+    char address[192];
+} Customer;
+
+int  db_list_customers(WmsDb *db, Customer *out, int max_count);
+bool db_create_customer(WmsDb *db, const Customer *c, char *err_out, size_t err_len);
+bool db_update_customer(WmsDb *db, const Customer *c, char *err_out, size_t err_len);
+/* Refuses if any dispatch order still references this customer. */
+bool db_delete_customer(WmsDb *db, int customer_id, char *err_out, size_t err_len);
+
+typedef struct {
+    int  id;
+    int  customer_id;
+    char customer_name[128];
+    char do_number[32];       /* "BL-0001" (bon de livraison), auto-generated */
+    char status[16];          /* "brouillon","confirmee","expedie_partiel","expedie","annule" */
+    char reference[64];
+    int  created_by;
+    char created_by_name[64];
+    char created_at[32];
+    char shipped_at[32];      /* empty until status becomes "expedie" */
+} DispatchOrder;
+
+typedef struct {
+    int    id;
+    int    do_id;
+    int    product_id;
+    char   product_name[128];
+    char   product_sku[64];
+    int    quantity_ordered;
+    int    quantity_shipped;
+    double unit_price;
+} DispatchOrderItem;
+
+bool db_create_dispatch_order(WmsDb *db, int customer_id, int created_by,
+                               const char *reference, int *out_do_id,
+                               char *err_out, size_t err_len);
+bool db_add_do_item(WmsDb *db, int do_id, int product_id, int quantity_ordered,
+                    double unit_price, char *err_out, size_t err_len);
+int  db_list_dispatch_orders(WmsDb *db, DispatchOrder *out, int max_count);
+int  db_get_do_items(WmsDb *db, int do_id, DispatchOrderItem *out, int max_count);
+bool db_update_do_item_shipped(WmsDb *db, int do_item_id, int new_shipped_qty,
+                                 char *err_out, size_t err_len);
+bool db_update_do_status(WmsDb *db, int do_id, const char *new_status);
+
+typedef struct {
+    int  id;
+    int  do_id;              /* 0 if not linked to a dispatch order */
+    char do_number[32];      /* empty if not linked */
+    int  product_id;
+    char product_name[128];
+    int  quantity;
+    char reason[128];
+    int  processed_by;
+    char processed_by_name[64];
+    char created_at[32];
+} ReturnRecord;
+
+bool db_create_return(WmsDb *db, int do_id, int product_id, int quantity,
+                       const char *reason, int processed_by, int *out_return_id,
+                       char *err_out, size_t err_len);
+int  db_list_returns(WmsDb *db, ReturnRecord *out, int max_count);
+
 
 #endif

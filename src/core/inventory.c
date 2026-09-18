@@ -1026,3 +1026,64 @@ bool inv_receive_po_item(int po_id, int po_item_id, int product_id,
 
     return true;
 }
+
+bool inv_ship_do_item(int do_id, int do_item_id, int product_id,
+                       int already_shipped, int new_shipped_qty,
+                       const char *do_number, const Session *session,
+                       char *err_out, size_t err_len) {
+    int delta = new_shipped_qty - already_shipped;
+    if (delta <= 0) {
+        set_err(err_out, err_len, "La quantite expediee doit augmenter");
+        return false;
+    }
+
+    if (!inv_post_movement(product_id, 1, -delta, MV_EXPEDITION, do_number, session,
+                            "Expedition client", err_out, err_len)) {
+        return false; /* includes the case where stock is insufficient */
+    }
+
+    if (!db_update_do_item_shipped(g_db, do_item_id, new_shipped_qty, err_out, err_len))
+        return false;
+
+    DispatchOrderItem items[256];
+    int count = db_get_do_items(g_db, do_id, items, 256);
+    bool all_shipped = (count > 0);
+    bool any_shipped = false;
+    for (int i = 0; i < count; i++) {
+        if (items[i].quantity_shipped > 0) any_shipped = true;
+        if (items[i].quantity_shipped < items[i].quantity_ordered) all_shipped = false;
+    }
+    const char *new_status = all_shipped ? "expedie" : (any_shipped ? "expedie_partiel" : "confirmee");
+    db_update_do_status(g_db, do_id, new_status);
+
+    return true;
+}
+
+bool inv_process_return(int do_id, int product_id, int quantity,
+                         const char *reason, const Session *session,
+                         char *err_out, size_t err_len) {
+    if (quantity <= 0) {
+        set_err(err_out, err_len, "Quantite de retour invalide");
+        return false;
+    }
+
+    char ref[32] = "RETOUR";
+    if (do_id > 0) {
+        DispatchOrder orders[256];
+        int c = db_list_dispatch_orders(g_db, orders, 256);
+        for (int i = 0; i < c; i++)
+            if (orders[i].id == do_id) { snprintf(ref, sizeof ref, "%s", orders[i].do_number); break; }
+    }
+
+    if (!inv_post_movement(product_id, 1, quantity, MV_RETOUR, ref, session,
+                            reason && reason[0] ? reason : "Retour client", err_out, err_len)) {
+        return false;
+    }
+
+    int new_return_id;
+    if (!db_create_return(g_db, do_id, product_id, quantity, reason,
+                           session->user_id, &new_return_id, err_out, err_len)) {
+        return false;
+    }
+    return true;
+}
