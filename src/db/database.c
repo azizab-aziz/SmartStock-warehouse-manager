@@ -1000,3 +1000,140 @@ int db_list_returns(WmsDb *db, ReturnRecord *out, int max_count) {
     sqlite3_finalize(st);
     return n;
 }
+
+/* Shared with inventory.c's csv_write_field via a local copy - database.c
+ * has no dependency on inventory.c, so this is a small local duplicate
+ * rather than a cross-module include just for one helper. */
+static void db_csv_write_field(FILE *f, const char *text) {
+    bool needs_quotes = (strchr(text, ',') != NULL) || (strchr(text, '"') != NULL);
+    if (!needs_quotes) { fputs(text, f); return; }
+    fputc('"', f);
+    for (const char *c = text; *c; c++) {
+        if (*c == '"') fputc('"', f);
+        fputc(*c, f);
+    }
+    fputc('"', f);
+}
+
+static FILE *db_csv_open(const char *path, char *err_out, size_t err_len) {
+    FILE *f = fopen(path, "wb");
+    if (!f) {
+        snprintf(err_out, err_len, "Impossible de creer le fichier CSV (dossier manquant ?)");
+        return NULL;
+    }
+    fputc(0xEF, f); fputc(0xBB, f); fputc(0xBF, f); /* UTF-8 BOM */
+    return f;
+}
+
+bool db_export_suppliers_csv(WmsDb *db, const char *path, char *err_out, size_t err_len) {
+    FILE *f = db_csv_open(path, err_out, err_len);
+    if (!f) return false;
+    fprintf(f, "Nom,Contact,Telephone,Email,Adresse\r\n");
+
+    Supplier suppliers[256];
+    int count = db_list_suppliers(db, suppliers, 256);
+    for (int i = 0; i < count; i++) {
+        Supplier *s = &suppliers[i];
+        db_csv_write_field(f, s->name); fputc(',', f);
+        db_csv_write_field(f, s->contact_name); fputc(',', f);
+        db_csv_write_field(f, s->phone); fputc(',', f);
+        db_csv_write_field(f, s->email); fputc(',', f);
+        db_csv_write_field(f, s->address);
+        fprintf(f, "\r\n");
+    }
+    fclose(f);
+    return true;
+}
+
+bool db_export_customers_csv(WmsDb *db, const char *path, char *err_out, size_t err_len) {
+    FILE *f = db_csv_open(path, err_out, err_len);
+    if (!f) return false;
+    fprintf(f, "Nom,Contact,Telephone,Email,Adresse\r\n");
+
+    Customer customers[256];
+    int count = db_list_customers(db, customers, 256);
+    for (int i = 0; i < count; i++) {
+        Customer *c = &customers[i];
+        db_csv_write_field(f, c->name); fputc(',', f);
+        db_csv_write_field(f, c->contact_name); fputc(',', f);
+        db_csv_write_field(f, c->phone); fputc(',', f);
+        db_csv_write_field(f, c->email); fputc(',', f);
+        db_csv_write_field(f, c->address);
+        fprintf(f, "\r\n");
+    }
+    fclose(f);
+    return true;
+}
+
+bool db_export_po_items_csv(WmsDb *db, const char *path, char *err_out, size_t err_len) {
+    FILE *f = db_csv_open(path, err_out, err_len);
+    if (!f) return false;
+    fprintf(f, "PO_Numero,Fournisseur,Statut,Date_Creation,SKU,Produit,Qte_Commandee,Qte_Recue,Cout_Unitaire\r\n");
+
+    PurchaseOrder orders[256];
+    int order_count = db_list_purchase_orders(db, orders, 256);
+    for (int i = 0; i < order_count; i++) {
+        PurchaseOrder *po = &orders[i];
+        PurchaseOrderItem items[256];
+        int item_count = db_get_po_items(db, po->id, items, 256);
+        for (int j = 0; j < item_count; j++) {
+            PurchaseOrderItem *it = &items[j];
+            db_csv_write_field(f, po->po_number); fputc(',', f);
+            db_csv_write_field(f, po->supplier_name); fputc(',', f);
+            db_csv_write_field(f, po->status); fputc(',', f);
+            db_csv_write_field(f, po->created_at); fputc(',', f);
+            db_csv_write_field(f, it->product_sku); fputc(',', f);
+            db_csv_write_field(f, it->product_name); fputc(',', f);
+            fprintf(f, "%d,%d,%.2f\r\n", it->quantity_ordered, it->quantity_received, it->unit_cost);
+        }
+    }
+    fclose(f);
+    return true;
+}
+
+bool db_export_do_items_csv(WmsDb *db, const char *path, char *err_out, size_t err_len) {
+    FILE *f = db_csv_open(path, err_out, err_len);
+    if (!f) return false;
+    fprintf(f, "BL_Numero,Client,Statut,Date_Creation,SKU,Produit,Qte_Commandee,Qte_Expediee,Prix_Unitaire\r\n");
+
+    DispatchOrder orders[256];
+    int order_count = db_list_dispatch_orders(db, orders, 256);
+    for (int i = 0; i < order_count; i++) {
+        DispatchOrder *do_ = &orders[i];
+        DispatchOrderItem items[256];
+        int item_count = db_get_do_items(db, do_->id, items, 256);
+        for (int j = 0; j < item_count; j++) {
+            DispatchOrderItem *it = &items[j];
+            db_csv_write_field(f, do_->do_number); fputc(',', f);
+            db_csv_write_field(f, do_->customer_name); fputc(',', f);
+            db_csv_write_field(f, do_->status); fputc(',', f);
+            db_csv_write_field(f, do_->created_at); fputc(',', f);
+            db_csv_write_field(f, it->product_sku); fputc(',', f);
+            db_csv_write_field(f, it->product_name); fputc(',', f);
+            fprintf(f, "%d,%d,%.2f\r\n", it->quantity_ordered, it->quantity_shipped, it->unit_price);
+        }
+    }
+    fclose(f);
+    return true;
+}
+
+bool db_export_returns_csv(WmsDb *db, const char *path, char *err_out, size_t err_len) {
+    FILE *f = db_csv_open(path, err_out, err_len);
+    if (!f) return false;
+    fprintf(f, "Date,Produit,Quantite,BL_Lie,Raison,Traite_Par\r\n");
+
+    ReturnRecord returns[256];
+    int count = db_list_returns(db, returns, 256);
+    for (int i = 0; i < count; i++) {
+        ReturnRecord *r = &returns[i];
+        db_csv_write_field(f, r->created_at); fputc(',', f);
+        db_csv_write_field(f, r->product_name); fputc(',', f);
+        fprintf(f, "%d,", r->quantity);
+        db_csv_write_field(f, r->do_number[0] ? r->do_number : "-"); fputc(',', f);
+        db_csv_write_field(f, r->reason); fputc(',', f);
+        db_csv_write_field(f, r->processed_by_name[0] ? r->processed_by_name : "-");
+        fprintf(f, "\r\n");
+    }
+    fclose(f);
+    return true;
+}
