@@ -384,12 +384,12 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
     remove(EXPORT_TMP_CSV_PATH);
     remove(EXPORT_TMP_MOV_CSV_PATH);
 
-        if (rc == 0) {
+    if (rc == 0) {
         char msg[160];
-        snprintf(msg, sizeof msg, "Fiche PDF generee (%s)", pdf_path);
+        snprintf(msg, sizeof msg, "Rapport Excel genere (%s)", xlsx_path);
         toast_show(toast, msg, false);
     } else {
-        toast_show(toast, "Erreur - voir exports/sheet_log.txt", true);
+        toast_show(toast, "Erreur - voir exports/export_log.txt", true);
     }
 }
 
