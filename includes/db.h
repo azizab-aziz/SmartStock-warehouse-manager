@@ -210,5 +210,9 @@ bool db_create_return(WmsDb *db, int do_id, int product_id, int quantity,
                        char *err_out, size_t err_len);
 int  db_list_returns(WmsDb *db, ReturnRecord *out, int max_count);
 
-
+bool db_export_suppliers_csv(WmsDb *db, const char *path, char *err_out, size_t err_len);
+bool db_export_customers_csv(WmsDb *db, const char *path, char *err_out, size_t err_len);
+bool db_export_po_items_csv(WmsDb *db, const char *path, char *err_out, size_t err_len);
+bool db_export_do_items_csv(WmsDb *db, const char *path, char *err_out, size_t err_len);
+bool db_export_returns_csv(WmsDb *db, const char *path, char *err_out, size_t err_len);
 #endif
