@@ -1,0 +1,207 @@
+"""
+export_commercial.py - reads a manifest file (key,path per line) pointing
+at CSVs for suppliers, customers, purchase-order items, dispatch-order
+items, and returns, and produces a styled multi-sheet .xlsm report:
+Resume, Fournisseurs, Clients, Commandes Achat, Commandes Client, Retours.
+
+Same style conventions as export_report.py: no pandas/numpy, just csv
+(stdlib) + openpyxl.
+
+Usage:
+    python export_commercial.py <manifest_path> <output_xlsm_path>
+"""
+
+import csv
+import os
+import subprocess
+import sys
+
+HEADER_COLOR = "1E293B"
+SUMMARY_COLOR = "0F172A"
+ROW_ALT_COLOR = "EFF6FF"
+GREEN = "10B981"
+RED = "DC2626"
+ORANGE = "D97706"
+
+
+def ensure_openpyxl():
+    try:
+        import openpyxl  # noqa: F401
+    except ImportError:
+        print("openpyxl introuvable, installation en cours...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "openpyxl"])
+
+
+ensure_openpyxl()
+
+from openpyxl import Workbook
+from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+from openpyxl.utils import get_column_letter
+
+
+def read_csv(path):
+    if not path or not os.path.isfile(path):
+        return [], []
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        return [], []
+    return rows[0], rows[1:]
+
+
+def read_manifest(path):
+    entries = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or "," not in line:
+                continue
+            key, csv_path = line.split(",", 1)
+            entries[key.strip()] = csv_path.strip()
+    return entries
+
+
+def build_simple_sheet(ws, title, headers, data, status_col=None, status_colors=None):
+    """A plain styled table: navy header row, alternating rows, frozen
+    header, autofilter. Optionally colors one column's text based on a
+    value->color lookup (used for order status columns)."""
+    thin = Side(style="thin", color="D0D5DD")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    alt_fill = PatternFill("solid", fgColor=ROW_ALT_COLOR)
+    col_count = len(headers)
+
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=col_count)
+    title_cell = ws.cell(row=1, column=1, value=f"{title} ({len(data)})")
+    title_cell.fill = PatternFill("solid", fgColor=SUMMARY_COLOR)
+    title_cell.font = Font(color="FFFFFF", bold=True, size=13)
+    title_cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 24
+
+    for ci, h in enumerate(headers, start=1):
+        c = ws.cell(row=3, column=ci, value=h)
+        c.fill = PatternFill("solid", fgColor=HEADER_COLOR)
+        c.font = Font(color="FFFFFF", bold=True)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = border
+
+    if not data:
+        return
+
+    for i, row in enumerate(data):
+        r = i + 4
+        is_alt = i % 2 == 1
+        for ci in range(1, col_count + 1):
+            raw = row[ci - 1] if ci - 1 < len(row) else ""
+            cell = ws.cell(row=r, column=ci, value=raw)
+            cell.border = border
+            if is_alt:
+                cell.fill = alt_fill
+            if status_col is not None and ci - 1 == status_col and status_colors:
+                color = status_colors.get(raw.strip(), None)
+                if color:
+                    cell.font = Font(color=color, bold=True)
+
+    for ci, h in enumerate(headers, start=1):
+        max_len = len(h)
+        for row in data:
+            if ci - 1 < len(row):
+                max_len = max(max_len, len(str(row[ci - 1])))
+        ws.column_dimensions[get_column_letter(ci)].width = max_len + 4
+
+    ws.freeze_panes = "A4"
+    ws.auto_filter.ref = f"A3:{get_column_letter(col_count)}{len(data) + 3}"
+
+
+PO_STATUS_COLORS = {"recu": GREEN, "recu_partiel": ORANGE, "annule": RED}
+DO_STATUS_COLORS = {"expedie": GREEN, "expedie_partiel": ORANGE, "annule": RED}
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: export_commercial.py <manifest_path> <output_xlsm_path>")
+        sys.exit(1)
+
+    manifest_path, out_path = sys.argv[1], sys.argv[2]
+    if not os.path.isfile(manifest_path):
+        print(f"Erreur: manifeste introuvable: {manifest_path}")
+        sys.exit(1)
+
+    entries = read_manifest(manifest_path)
+
+    sup_headers, sup_data = read_csv(entries.get("suppliers"))
+    cust_headers, cust_data = read_csv(entries.get("customers"))
+    po_headers, po_data = read_csv(entries.get("po_items"))
+    do_headers, do_data = read_csv(entries.get("do_items"))
+    ret_headers, ret_data = read_csv(entries.get("returns"))
+
+    wb = Workbook()
+
+    # ---- Resume ----
+    ws_summary = wb.active
+    ws_summary.title = "Resume"
+    ws_summary.merge_cells("A1:D1")
+    title_cell = ws_summary.cell(row=1, column=1, value="Resume commercial")
+    title_cell.fill = PatternFill("solid", fgColor=SUMMARY_COLOR)
+    title_cell.font = Font(color="FFFFFF", bold=True, size=13)
+    ws_summary.row_dimensions[1].height = 24
+
+    open_pos = sum(1 for r in po_data if r and len(r) > 2 and r[2] not in ("recu", "annule"))
+    open_dos = sum(1 for r in do_data if r and len(r) > 2 and r[2] not in ("expedie", "annule"))
+    summary_rows = [
+        ("Fournisseurs", len(sup_data)),
+        ("Clients", len(cust_data)),
+        ("Lignes de commande achat", len(po_data)),
+        ("Commandes achat ouvertes", open_pos),
+        ("Lignes de commande client", len(do_data)),
+        ("Commandes client ouvertes", open_dos),
+        ("Retours enregistres", len(ret_data)),
+    ]
+    for i, (label, value) in enumerate(summary_rows):
+        r = i + 3
+        lc = ws_summary.cell(row=r, column=1, value=label)
+        lc.font = Font(bold=True, color=HEADER_COLOR)
+        vc = ws_summary.cell(row=r, column=2, value=value)
+        vc.font = Font(bold=True, color=GREEN, size=12)
+    ws_summary.column_dimensions["A"].width = 30
+    ws_summary.column_dimensions["B"].width = 14
+
+    # ---- Fournisseurs ----
+    ws_sup = wb.create_sheet("Fournisseurs")
+    build_simple_sheet(ws_sup, "Fournisseurs", sup_headers or
+                        ["Nom", "Contact", "Telephone", "Email", "Adresse"], sup_data)
+
+    # ---- Clients ----
+    ws_cust = wb.create_sheet("Clients")
+    build_simple_sheet(ws_cust, "Clients", cust_headers or
+                        ["Nom", "Contact", "Telephone", "Email", "Adresse"], cust_data)
+
+    # ---- Commandes Achat ----
+    ws_po = wb.create_sheet("Commandes Achat")
+    build_simple_sheet(ws_po, "Commandes Achat", po_headers or
+                        ["PO_Numero", "Fournisseur", "Statut", "Date_Creation", "SKU",
+                         "Produit", "Qte_Commandee", "Qte_Recue", "Cout_Unitaire"],
+                        po_data, status_col=2, status_colors=PO_STATUS_COLORS)
+
+    # ---- Commandes Client ----
+    ws_do = wb.create_sheet("Commandes Client")
+    build_simple_sheet(ws_do, "Commandes Client", do_headers or
+                        ["BL_Numero", "Client", "Statut", "Date_Creation", "SKU",
+                         "Produit", "Qte_Commandee", "Qte_Expediee", "Prix_Unitaire"],
+                        do_data, status_col=2, status_colors=DO_STATUS_COLORS)
+
+    # ---- Retours ----
+    ws_ret = wb.create_sheet("Retours")
+    build_simple_sheet(ws_ret, "Retours", ret_headers or
+                        ["Date", "Produit", "Quantite", "BL_Lie", "Raison", "Traite_Par"], ret_data)
+
+    out_dir = os.path.dirname(out_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+    if not out_path.lower().endswith((".xlsx", ".xlsm")):
+        out_path = out_path + ".xlsx"
+    wb.save(out_path)
+    print("Excel exported successfully")
+
+
+if __name__ == "__main__":
+    main()
