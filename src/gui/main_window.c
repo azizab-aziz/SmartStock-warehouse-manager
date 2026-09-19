@@ -384,12 +384,67 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
     remove(EXPORT_TMP_CSV_PATH);
     remove(EXPORT_TMP_MOV_CSV_PATH);
 
-    if (rc == 0) {
+        if (rc == 0) {
         char msg[160];
-        snprintf(msg, sizeof msg, "Rapport Excel genere (%s)", xlsx_path);
+        snprintf(msg, sizeof msg, "Fiche PDF generee (%s)", pdf_path);
         toast_show(toast, msg, false);
     } else {
-        toast_show(toast, "Erreur - voir exports/export_log.txt", true);
+        toast_show(toast, "Erreur - voir exports/sheet_log.txt", true);
+    }
+}
+
+#define COMMERCIAL_XLSX_PATH "exports/rapport_commercial.xlsm"
+#define COMMERCIAL_PY_SCRIPT "python_scripts/export_commercial.py"
+#define COMMERCIAL_MANIFEST_PATH "exports/tmp/commercial_manifest.csv"
+
+/* Writes 5 scratch CSVs (suppliers, customers, PO items, BL items,
+ * returns) plus a small manifest file listing "key,path" for each -
+ * Python reads the manifest and looks up each CSV by name instead of by
+ * fixed argument position, so this stays easy to extend with more
+ * sheets later without the command line growing forever. */
+static void run_commercial_export(WmsDb *db, Toast *toast) {
+    _mkdir("exports");
+    _mkdir("exports/tmp");
+
+    struct { const char *key; const char *path; } exports[5] = {
+        { "suppliers", "exports/tmp/commercial_suppliers.csv" },
+        { "customers", "exports/tmp/commercial_customers.csv" },
+        { "po_items",  "exports/tmp/commercial_po_items.csv" },
+        { "do_items",  "exports/tmp/commercial_do_items.csv" },
+        { "returns",   "exports/tmp/commercial_returns.csv" },
+    };
+
+    char err[256];
+    if (!db_export_suppliers_csv(db, exports[0].path, err, sizeof err)) { toast_show(toast, err, true); return; }
+    if (!db_export_customers_csv(db, exports[1].path, err, sizeof err)) { toast_show(toast, err, true); return; }
+    if (!db_export_po_items_csv(db, exports[2].path, err, sizeof err))  { toast_show(toast, err, true); return; }
+    if (!db_export_do_items_csv(db, exports[3].path, err, sizeof err))  { toast_show(toast, err, true); return; }
+    if (!db_export_returns_csv(db, exports[4].path, err, sizeof err))   { toast_show(toast, err, true); return; }
+
+    FILE *manifest = fopen(COMMERCIAL_MANIFEST_PATH, "w");
+    if (!manifest) {
+        toast_show(toast, "Impossible de creer le manifeste d'export", true);
+        return;
+    }
+    for (int i = 0; i < 5; i++)
+        fprintf(manifest, "%s,%s\n", exports[i].key, exports[i].path);
+    fclose(manifest);
+
+    char cmd[600];
+    snprintf(cmd, sizeof cmd,
+             "python \"%s\" \"%s\" \"%s\" > \"exports\\commercial_log.txt\" 2>&1",
+             COMMERCIAL_PY_SCRIPT, COMMERCIAL_MANIFEST_PATH, COMMERCIAL_XLSX_PATH);
+    int rc = system(cmd);
+
+    for (int i = 0; i < 5; i++) remove(exports[i].path);
+    remove(COMMERCIAL_MANIFEST_PATH);
+
+    if (rc == 0) {
+        char msg[160];
+        snprintf(msg, sizeof msg, "Rapport commercial genere (%s)", COMMERCIAL_XLSX_PATH);
+        toast_show(toast, msg, false);
+    } else {
+        toast_show(toast, "Erreur - voir exports/commercial_log.txt", true);
     }
 }
 
@@ -629,6 +684,12 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
         run_excel_export(0, "Tout le stock", toast);
     }
     cat_tx += 150 + cat_btn_gap;
+
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 160, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 160, sh }, "Rapport Commercial") && !modal_active) {
+        run_commercial_export(db, toast);
+    }
+    cat_tx += 160 + cat_btn_gap;
 
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Journal d'audit") && !modal_active) {
