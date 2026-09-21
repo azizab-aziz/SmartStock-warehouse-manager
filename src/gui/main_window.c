@@ -393,9 +393,59 @@ static void run_excel_export(int category_id, const char *sheet_name, Toast *toa
     }
 }
 
-#define COMMERCIAL_XLSX_PATH "exports/rapport_commercial.xlsm"
-#define COMMERCIAL_PY_SCRIPT "python_scripts/export_commercial.py"
-#define COMMERCIAL_MANIFEST_PATH "exports/tmp/commercial_manifest.csv"
+#define DISPATCH_TMP_DO_CSV_PATH      "exports/tmp/dispatch_items.csv"
+#define DISPATCH_TMP_RETURNS_CSV_PATH "exports/tmp/dispatch_returns.csv"
+#define DISPATCH_XLSX_PATH "exports/rapport_expeditions.xlsx"
+#define DISPATCH_PY_SCRIPT "python_scripts/export_dispatch.py"
+
+/* Writes 2 scratch CSVs (dispatch-order line items, returns) to a
+ * scratch subfolder, shells out to a small dedicated Python/openpyxl
+ * script (no macros, no template - plain .xlsx), deletes the scratch
+ * CSVs once done. category_id <= 0 exports every category. */
+static void run_dispatch_export(WmsDb *db, int category_id, const char *label, Toast *toast) {
+    _mkdir("exports");
+    _mkdir("exports/tmp");
+
+    char err[256];
+    if (!db_export_do_items_csv(db, category_id, DISPATCH_TMP_DO_CSV_PATH, err, sizeof err)) {
+        toast_show(toast, err, true);
+        return;
+    }
+    if (!db_export_returns_csv(db, category_id, DISPATCH_TMP_RETURNS_CSV_PATH, err, sizeof err)) {
+        toast_show(toast, err, true);
+        return;
+    }
+
+    char xlsx_path[128];
+    if (category_id > 0)
+        snprintf(xlsx_path, sizeof xlsx_path, "exports/rapport_expeditions_cat%d.xlsx", category_id);
+    else
+        snprintf(xlsx_path, sizeof xlsx_path, "%s", DISPATCH_XLSX_PATH);
+
+    char cmd[1000];
+    snprintf(cmd, sizeof cmd,
+             "python \"%s\" \"%s\" \"%s\" \"%s\" \"%s\" > \"exports\\dispatch_log.txt\" 2>&1",
+             DISPATCH_PY_SCRIPT, DISPATCH_TMP_DO_CSV_PATH, DISPATCH_TMP_RETURNS_CSV_PATH, xlsx_path, label);
+    int rc = system(cmd);
+
+    FILE *dbg = fopen("exports/dispatch_debug.txt", "w");
+    if (dbg) {
+        fprintf(dbg, "command: %s\n", cmd);
+        fprintf(dbg, "system() return code: %d\n", rc);
+        fclose(dbg);
+    }
+
+    remove(DISPATCH_TMP_DO_CSV_PATH);
+    remove(DISPATCH_TMP_RETURNS_CSV_PATH);
+
+    if (rc == 0) {
+        char msg[160];
+        snprintf(msg, sizeof msg, "Rapport expeditions/retours genere (%s)", xlsx_path);
+        toast_show(toast, msg, false);
+    } else {
+        toast_show(toast, "Erreur - voir exports/dispatch_log.txt", true);
+    }
+}
 
 /* Writes 5 scratch CSVs (suppliers, customers, PO items, BL items,
  * returns) plus a small manifest file listing "key,path" for each -
@@ -685,11 +735,7 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     }
     cat_tx += 150 + cat_btn_gap;
 
-    toolbar_wrap(&cat_tx, &cat_toolbar_y, 160, sx, sh);
-    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 160, sh }, "Rapport Commercial") && !modal_active) {
-        run_commercial_export(db, toast);
-    }
-    cat_tx += 160 + cat_btn_gap;
+
 
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
     if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 150, sh }, "Journal d'audit") && !modal_active) {
