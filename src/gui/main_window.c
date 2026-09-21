@@ -735,6 +735,12 @@ static void draw_categories_screen(WmsDb *db, Category *all_categories, int *tot
     }
     cat_tx += 150 + cat_btn_gap;
 
+    toolbar_wrap(&cat_tx, &cat_toolbar_y, 170, sx, sh);
+    if (GuiButton((Rectangle){ cat_tx, cat_toolbar_y, 170, sh }, "Expeditions & Retours") && !modal_active) {
+        run_dispatch_export(db, 0, "Tout le stock", toast);
+    }
+    cat_tx += 170 + cat_btn_gap;
+
 
 
     toolbar_wrap(&cat_tx, &cat_toolbar_y, 150, sx, sh);
@@ -3366,11 +3372,17 @@ void gui_run(WmsDb *db) {
         }
         tx += 130 + btn_gap;
 
-               toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
+        toolbar_wrap(&tx, &toolbar_y, 140, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 140, sh }, "Exporter Excel") && !modal_active) {
             run_excel_export(g_active_category_id, g_active_category_name, &toast);
         }
         tx += 140 + btn_gap;
+
+        toolbar_wrap(&tx, &toolbar_y, 170, sx, sh);
+        if (GuiButton((Rectangle){ tx, toolbar_y, 170, sh }, "Expeditions & Retours") && !modal_active) {
+            run_dispatch_export(db, g_active_category_id, g_active_category_name, &toast);
+        }
+        tx += 170 + btn_gap;
 
         toolbar_wrap(&tx, &toolbar_y, 110, sx, sh);
         if (GuiButton((Rectangle){ tx, toolbar_y, 110, sh }, "Fiche PDF") && !modal_active) {
