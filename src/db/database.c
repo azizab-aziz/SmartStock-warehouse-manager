@@ -1137,3 +1137,56 @@ bool db_export_returns_csv(WmsDb *db, const char *path, char *err_out, size_t er
     fclose(f);
     return true;
 }
+
+bool db_export_returns_csv(WmsDb *db, int category_id, const char *path, char *err_out, size_t err_len) {
+    FILE *f = db_csv_open(path, err_out, err_len);
+    if (!f) return false;
+    fprintf(f, "Date,Produit,Quantite,BL_Lie,Raison,Traite_Par\r\n");
+
+    sqlite3_stmt *st;
+    const char *sql_all =
+        "SELECT r.created_at, COALESCE(p.name,'Produit supprime'), r.quantity, "
+        "COALESCE(d.do_number,''), COALESCE(r.reason,''), COALESCE(u.username,'') "
+        "FROM returns r "
+        "LEFT JOIN products p ON p.id = r.product_id "
+        "LEFT JOIN dispatch_orders d ON d.id = r.do_id "
+        "LEFT JOIN users u ON u.id = r.processed_by "
+        "ORDER BY r.created_at DESC;";
+    const char *sql_cat =
+        "SELECT r.created_at, COALESCE(p.name,'Produit supprime'), r.quantity, "
+        "COALESCE(d.do_number,''), COALESCE(r.reason,''), COALESCE(u.username,'') "
+        "FROM returns r "
+        "LEFT JOIN products p ON p.id = r.product_id "
+        "LEFT JOIN dispatch_orders d ON d.id = r.do_id "
+        "LEFT JOIN users u ON u.id = r.processed_by "
+        "WHERE p.category_id = ?1 "
+        "ORDER BY r.created_at DESC;";
+
+    if (category_id > 0) {
+        sqlite3_prepare_v2(db->handle, sql_cat, -1, &st, NULL);
+        sqlite3_bind_int(st, 1, category_id);
+    } else {
+        sqlite3_prepare_v2(db->handle, sql_all, -1, &st, NULL);
+    }
+
+    while (sqlite3_step(st) == SQLITE_ROW) {
+        const unsigned char *date = sqlite3_column_text(st, 0);
+        const unsigned char *prod = sqlite3_column_text(st, 1);
+        int qty = sqlite3_column_int(st, 2);
+        const unsigned char *blnum = sqlite3_column_text(st, 3);
+        const unsigned char *reason = sqlite3_column_text(st, 4);
+        const unsigned char *user = sqlite3_column_text(st, 5);
+
+        db_csv_write_field(f, date ? (const char*)date : ""); fputc(',', f);
+        db_csv_write_field(f, prod ? (const char*)prod : ""); fputc(',', f);
+        fprintf(f, "%d,", qty);
+        db_csv_write_field(f, (blnum && blnum[0]) ? (const char*)blnum : "-"); fputc(',', f);
+        db_csv_write_field(f, reason ? (const char*)reason : ""); fputc(',', f);
+        db_csv_write_field(f, (user && user[0]) ? (const char*)user : "-");
+        fprintf(f, "\r\n");
+    }
+    sqlite3_finalize(st);
+    fclose(f);
+    return true;
+}
+
