@@ -407,11 +407,11 @@ static void run_dispatch_export(WmsDb *db, int category_id, const char *label, T
     _mkdir("exports/tmp");
 
     char err[256];
-    if (!db_export_do_items_csv(db, category_id, DISPATCH_TMP_DO_CSV_PATH, err, sizeof err)) {
+    if (!db_export_do_items_csv(db, DISPATCH_TMP_DO_CSV_PATH, err, sizeof err)) {
         toast_show(toast, err, true);
         return;
     }
-    if (!db_export_returns_csv(db, category_id, DISPATCH_TMP_RETURNS_CSV_PATH, err, sizeof err)) {
+    if (!db_export_returns_csv(db, DISPATCH_TMP_RETURNS_CSV_PATH, err, sizeof err)) {
         toast_show(toast, err, true);
         return;
     }
@@ -446,6 +446,10 @@ static void run_dispatch_export(WmsDb *db, int category_id, const char *label, T
         toast_show(toast, "Erreur - voir exports/dispatch_log.txt", true);
     }
 }
+
+#define COMMERCIAL_MANIFEST_PATH "exports/tmp/commercial_manifest.csv"
+#define COMMERCIAL_XLSX_PATH     "exports/rapport_commercial.xlsx"
+#define COMMERCIAL_PY_SCRIPT     "python_scripts/export_commercial.py"
 
 /* Writes 5 scratch CSVs (suppliers, customers, PO items, BL items,
  * returns) plus a small manifest file listing "key,path" for each -
