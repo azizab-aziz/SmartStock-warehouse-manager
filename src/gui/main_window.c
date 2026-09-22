@@ -329,7 +329,7 @@ static void toast_show(Toast *t, const char *msg, bool is_error) {
 
 #define EXPORT_TMP_CSV_PATH  "exports/tmp/export.csv"
 #define EXPORT_TMP_MOV_CSV_PATH "exports/tmp/export_movements.csv"
-#define EXPORT_XLSX_PATH "exports/rapport_stock.xlsx"
+#define EXPORT_XLSX_PATH "exports/rapport_stock.xlsm"
 #define EXPORT_PY_SCRIPT "python_scripts/export_report.py"
 
 /* Writes both CSVs (products + movement history) to a scratch subfolder,
